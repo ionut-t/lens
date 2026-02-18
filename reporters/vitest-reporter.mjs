@@ -39,16 +39,30 @@ export default class LensReporter {
     this._emit({ type: "file-started", file: module.moduleId });
   }
 
+  onTestSuiteResult(suite) {
+    const loc = suite.location;
+    if (loc) {
+      this._emit({
+        type: "suite-location",
+        file: suite.module.moduleId,
+        name: suite.fullName,
+        location: { line: loc.line, column: loc.column },
+      });
+    }
+  }
+
   onTestCaseResult(testCase) {
     const result = testCase.result();
     const diag = testCase.diagnostic();
 
+    const loc = testCase.location;
     const event = {
       type: "test-finished",
       file: testCase.module.moduleId,
       name: testCase.fullName,
       state: result.state,
       duration: diag?.duration,
+      location: loc ? { line: loc.line, column: loc.column } : undefined,
     };
 
     if (result.state === "failed" && result.errors.length > 0) {

@@ -87,6 +87,7 @@ impl VitestRunner {
             .arg("run")
             .args(args)
             .arg("--disableConsoleIntercept")
+            .arg("--includeTaskLocation")
             .arg(format!("--reporter={}", reporter_path));
 
         let mut child = cmd
@@ -257,6 +258,12 @@ enum VitestEvent {
         state: String,
         duration: Option<f64>,
         error: Option<VitestError>,
+        location: Option<VitestLocation>,
+    },
+    SuiteLocation {
+        file: String,
+        name: String,
+        location: VitestLocation,
     },
     ConsoleLog {
         file: String,
@@ -272,6 +279,12 @@ enum VitestEvent {
         skipped: usize,
         duration: u64,
     },
+}
+
+#[derive(Debug, Deserialize)]
+struct VitestLocation {
+    line: u32,
+    column: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -294,6 +307,7 @@ impl VitestEvent {
                 state,
                 duration,
                 error,
+                location,
             } => {
                 let status = match state.as_str() {
                     "passed" => TestStatus::Passed,
@@ -323,8 +337,18 @@ impl VitestEvent {
                         duration_ms: duration.map(|d| d as u64),
                         failure,
                     },
+                    location: location.map(|l| (l.line, l.column)),
                 })
             }
+            VitestEvent::SuiteLocation {
+                file,
+                name,
+                location,
+            } => Some(TestEvent::SuiteLocation {
+                file,
+                name,
+                location: (location.line, location.column),
+            }),
             VitestEvent::ConsoleLog { file, content } => {
                 Some(TestEvent::ConsoleLog { file, content })
             }

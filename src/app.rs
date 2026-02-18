@@ -21,6 +21,7 @@ pub enum TestEvent {
         file: String,
         name: String,
         result: crate::models::TestResult,
+        location: Option<(u32, u32)>,
     },
     FileFinished {
         path: String,
@@ -30,6 +31,11 @@ pub enum TestEvent {
     },
     Output {
         line: String,
+    },
+    SuiteLocation {
+        file: String,
+        name: String,
+        location: (u32, u32),
     },
     ConsoleLog {
         file: String,
@@ -94,6 +100,8 @@ pub struct App {
     pub event_tx: mpsc::UnboundedSender<TestEvent>,
     pub output_lines: Vec<String>,
     pub pending_runs: Vec<PendingRun>,
+    /// (file_path, line, column)
+    pub pending_editor: Option<(PathBuf, Option<u32>, Option<u32>)>,
     pub should_quit: bool,
     pub filter_active: bool,
     pub filter_query: String,
@@ -121,6 +129,7 @@ impl App {
             event_tx,
             output_lines: Vec::new(),
             pending_runs: Vec::new(),
+            pending_editor: None,
             should_quit: false,
             filter_active: false,
             filter_query: String::new(),
@@ -285,7 +294,33 @@ impl App {
                 self.filter_active = false;
             }
             Action::OpenInEditor => {
-                // Will be implemented in Phase 6
+                if let Some(node_id) = self.selected_node_id() {
+                    let node = self.tree.get(node_id);
+
+                    // For failed tests, open at failure location; otherwise at definition
+                    let (line, col) = node
+                        .and_then(|n| n.result.as_ref())
+                        .and_then(|r| r.failure.as_ref())
+                        .and_then(|f| f.stack_trace.as_ref())
+                        .and_then(|st| Self::parse_line_col_from_stack(st))
+                        .or_else(|| node.and_then(|n| n.location.map(|(l, c)| (Some(l), Some(c)))))
+                        .unwrap_or((None, None));
+
+                    // Walk up to find the file node
+                    let mut current = Some(node_id);
+                    while let Some(id) = current {
+                        if let Some(n) = self.tree.get(id) {
+                            if n.kind == NodeKind::File {
+                                let path = self.resolve_file_path(id);
+                                self.pending_editor = Some((path, line, col));
+                                break;
+                            }
+                            current = n.parent;
+                        } else {
+                            break;
+                        }
+                    }
+                }
             }
         }
     }
@@ -314,7 +349,12 @@ impl App {
                     node.status = TestStatus::Running;
                 }
             }
-            TestEvent::TestFinished { file, name, result } => {
+            TestEvent::TestFinished {
+                file,
+                name,
+                result,
+                location,
+            } => {
                 self.progress_done += 1;
                 let file_name = self.file_display_name(&file);
                 let file_id = self.find_or_create_file_node(&file_name, &file);
@@ -327,6 +367,23 @@ impl App {
                         .is_some_and(|n| n.status.is_terminal());
                 if !dominated {
                     self.tree.update_result(test_id, result);
+                }
+                if let Some(loc) = location
+                    && let Some(node) = self.tree.get_mut(test_id)
+                {
+                    node.location = Some(loc);
+                }
+            }
+            TestEvent::SuiteLocation {
+                file,
+                name,
+                location,
+            } => {
+                let file_name = self.file_display_name(&file);
+                let file_id = self.find_or_create_file_node(&file_name, &file);
+                let suite_id = self.find_or_create_test_node(file_id, &name);
+                if let Some(node) = self.tree.get_mut(suite_id) {
+                    node.location = Some(location);
                 }
             }
             TestEvent::FileFinished { .. } => {}
@@ -407,6 +464,23 @@ impl App {
                 self.set_running_status(child_id);
             }
         }
+    }
+
+    /// Extract line and column from the first frame of a stack trace.
+    /// Matches patterns like `(file.ts:123:45)` or `file.ts:123:45`.
+    fn parse_line_col_from_stack(stack: &str) -> Option<(Option<u32>, Option<u32>)> {
+        for segment in stack.split_whitespace() {
+            let s = segment.trim_matches(|c| c == '(' || c == ')');
+            let parts: Vec<&str> = s.rsplitn(3, ':').collect();
+            if parts.len() >= 2 {
+                let col = parts[0].parse::<u32>().ok();
+                let line = parts[1].parse::<u32>().ok();
+                if line.is_some() {
+                    return Some((line, col));
+                }
+            }
+        }
+        None
     }
 
     /// Resolve a file node's path to an absolute path.

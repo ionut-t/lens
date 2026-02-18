@@ -130,6 +130,33 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
             _ = tick.tick() => {}
         }
 
+        if let Some((path, line, col)) = app.pending_editor.take() {
+            // Suspend TUI, open editor, restore TUI
+            terminal::disable_raw_mode()?;
+            io::stdout().execute(LeaveAlternateScreen)?;
+
+            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".into());
+            let path_str = path.to_string_lossy().to_string();
+            let mut cmd = std::process::Command::new(&editor);
+
+            match (line, col) {
+                (Some(l), Some(c)) => {
+                    // +call cursor(line,col) works in vim and nvim
+                    cmd.arg(format!("+call cursor({},{})", l, c));
+                }
+                (Some(l), None) => {
+                    cmd.arg(format!("+{}", l));
+                }
+                _ => {}
+            }
+            cmd.arg(&path_str);
+            let _ = cmd.status();
+
+            io::stdout().execute(EnterAlternateScreen)?;
+            terminal::enable_raw_mode()?;
+            terminal.clear()?;
+        }
+
         if app.should_quit {
             break;
         }

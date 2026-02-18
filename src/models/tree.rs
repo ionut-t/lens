@@ -24,6 +24,8 @@ pub struct TestNode {
     pub result: Option<TestResult>,
     pub expanded: bool,
     pub console_output: Vec<String>,
+    /// Source location (line, column) for this test, if known.
+    pub location: Option<(u32, u32)>,
 }
 
 #[derive(Debug, Default)]
@@ -77,6 +79,7 @@ impl TestTree {
             result: None,
             expanded,
             console_output: Vec::new(),
+            location: None,
         });
         id
     }
