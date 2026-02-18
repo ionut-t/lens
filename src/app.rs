@@ -61,7 +61,11 @@ pub enum Action {
     RunTest { path: PathBuf, name: String },
     RerunFailed,
     ToggleWatch,
-    FilterMode,
+    FilterEnter,
+    FilterInput(char),
+    FilterBackspace,
+    FilterExit,
+    FilterApply,
     OpenInEditor,
 }
 
@@ -91,6 +95,8 @@ pub struct App {
     pub output_lines: Vec<String>,
     pub pending_run: Option<PendingRun>,
     pub should_quit: bool,
+    pub filter_active: bool,
+    pub filter_query: String,
 }
 
 impl App {
@@ -116,6 +122,8 @@ impl App {
             output_lines: Vec::new(),
             pending_run: None,
             should_quit: false,
+            filter_active: false,
+            filter_query: String::new(),
         };
         (app, event_rx)
     }
@@ -148,7 +156,12 @@ impl App {
             },
             Action::NavigateDown => match self.active_panel {
                 Panel::TestTree => {
-                    let max = self.tree.visible_nodes().len().saturating_sub(1);
+                    let visible = if self.filter_query.is_empty() {
+                        self.tree.visible_nodes()
+                    } else {
+                        self.tree.visible_nodes_filtered(&self.filter_query)
+                    };
+                    let max = visible.len().saturating_sub(1);
                     self.selected_tree_index = (self.selected_tree_index + 1).min(max);
                     self.detail_scroll_offset = 0;
                     self.adjust_tree_scroll();
@@ -239,7 +252,25 @@ impl App {
             Action::ToggleWatch => {
                 self.watch_mode = !self.watch_mode;
             }
-            Action::FilterMode | Action::OpenInEditor => {
+            Action::FilterEnter => {
+                self.filter_active = true;
+            }
+            Action::FilterInput(c) => {
+                self.filter_query.push(c);
+                self.selected_tree_index = 0;
+                self.tree_scroll_offset = 0;
+            }
+            Action::FilterBackspace => {
+                self.filter_query.pop();
+            }
+            Action::FilterExit => {
+                self.filter_query.clear();
+                self.filter_active = false;
+            }
+            Action::FilterApply => {
+                self.filter_active = false;
+            }
+            Action::OpenInEditor => {
                 // Will be implemented in Phase 6
             }
         }

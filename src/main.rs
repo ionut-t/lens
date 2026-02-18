@@ -62,8 +62,21 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
         tokio::select! {
             _ = async {
                 if event::poll(Duration::from_millis(16)).unwrap_or(false) &&
-                     let Ok(Event::Key(key)) = event::read() &&
-                         let Some(action) = map_key(key) {
+                     let Ok(Event::Key(key)) = event::read() {
+                    let action = if app.filter_active {
+                        match key.code {
+                            KeyCode::Esc => Some(Action::FilterExit),
+                            KeyCode::Enter => Some(Action::FilterApply),
+                            KeyCode::Backspace => Some(Action::FilterBackspace),
+                            KeyCode::Up => Some(Action::NavigateUp),
+                            KeyCode::Down => Some(Action::NavigateDown),
+                            KeyCode::Char(c) => Some(Action::FilterInput(c)),
+                            _ => None,
+                        }
+                    } else {
+                        map_key(key)
+                    };
+                    if let Some(action) = action {
                             match action {
                                 Action::RunAll => {
                                     app.handle_action(action);
@@ -106,6 +119,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                     }
                                 }
                             }
+                    }
                 }
             } => {}
 
@@ -140,7 +154,7 @@ fn map_key(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('a') => Some(Action::RunAll),
         KeyCode::Char('r') => Some(Action::RerunFailed),
         KeyCode::Char('w') => Some(Action::ToggleWatch),
-        KeyCode::Char('f') => Some(Action::FilterMode),
+        KeyCode::Char('f') | KeyCode::Char('/') => Some(Action::FilterEnter),
         KeyCode::Char('e') => Some(Action::OpenInEditor),
         _ => None,
     }
