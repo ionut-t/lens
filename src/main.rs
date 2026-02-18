@@ -90,6 +90,30 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                         }
                                     });
                                 }
+                                Action::ToggleWatch => {
+                                    app.handle_action(Action::ToggleWatch);
+                                    if app.watch_mode {
+                                        // Start watch mode
+                                        let tx = app.event_tx.clone();
+                                        let r = Arc::clone(&runner);
+                                        let handle = tokio::spawn(async move {
+                                            if let Err(e) = r.run_all_watch(tx.clone()).await {
+                                                let _ = tx.send(app::TestEvent::Error {
+                                                    message: format!("Watch error: {}", e),
+                                                });
+                                            }
+                                            // Notify app that watch process exited
+                                            let _ = tx.send(app::TestEvent::WatchStopped);
+                                        });
+                                        app.watch_handle = Some(handle);
+                                    } else {
+                                        // Stop watch mode
+                                        if let Some(handle) = app.watch_handle.take() {
+                                            handle.abort();
+                                        }
+                                        app.running = false;
+                                    }
+                                }
                                 other => {
                                     app.handle_action(other);
                                     for pending in app.pending_runs.drain(..) {

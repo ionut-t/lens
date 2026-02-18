@@ -12,6 +12,28 @@ use crate::models::{FailureDetail, RunSummary, TestResult, TestStatus};
 
 use super::{DiscoveredFile, TestRunner};
 
+/// Guard that kills the child process on drop (when a tokio task is aborted).
+struct ChildGuard(Option<tokio::process::Child>);
+
+impl ChildGuard {
+    fn new(child: tokio::process::Child) -> Self {
+        Self(Some(child))
+    }
+
+    /// Take ownership of the child (disabling the kill-on-drop guard).
+    fn take(&mut self) -> Option<tokio::process::Child> {
+        self.0.take()
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if let Some(ref mut child) = self.0 {
+            let _ = child.start_kill();
+        }
+    }
+}
+
 const REPORTER_SOURCE: &str = include_str!("../../reporters/vitest-reporter.mjs");
 
 /// Vitest adapter that spawns vitest with a custom NDJSON reporter.
@@ -74,24 +96,30 @@ impl VitestRunner {
     }
 
     /// Spawn vitest with the given args and stream NDJSON events from stdout.
+    ///
+    /// When `watch` is true, omits the `run` subcommand so vitest stays alive
+    /// and re-runs on file changes. Non-zero exit is not treated as an error
+    /// in watch mode (the process is killed on toggle-off).
     async fn spawn_and_stream(
         &self,
         args: &[&str],
         tx: mpsc::UnboundedSender<TestEvent>,
+        watch: bool,
     ) -> Result<()> {
         let reporter_file = self.write_reporter()?;
         let reporter_path = reporter_file.path().to_string_lossy().to_string();
 
         let mut cmd = Command::new("npx");
-        cmd.arg("vitest")
-            .arg("run")
-            .args(args)
+        cmd.arg("vitest");
+        cmd.arg(if watch { "watch" } else { "run" });
+        cmd.args(args)
             .arg("--disableConsoleIntercept")
             .arg("--includeTaskLocation")
             .arg(format!("--reporter={}", reporter_path));
 
         let mut child = cmd
             .current_dir(&self.workspace)
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
@@ -99,6 +127,11 @@ impl VitestRunner {
 
         let stdout = child.stdout.take().context("missing stdout")?;
         let stderr = child.stderr.take().context("missing stderr")?;
+
+        // Wrap child in a guard that kills the process on drop.
+        // In watch mode this ensures the process is killed when the tokio task is aborted.
+        // In normal mode we take the child back out to wait for its exit status.
+        let mut child_guard = ChildGuard::new(child);
 
         // Read stderr in background for error reporting
         let tx_err = tx.clone();
@@ -133,16 +166,18 @@ impl VitestRunner {
             }
         }
 
-        let status = child.wait().await.context("failed to wait for vitest")?;
         stderr_handle.await.ok();
 
         // Keep the temp file alive until vitest exits
         drop(reporter_file);
 
-        if !status.success() {
-            let _ = tx.send(TestEvent::Error {
-                message: format!("vitest exited with code {}", status.code().unwrap_or(-1)),
-            });
+        if !watch && let Some(mut child) = child_guard.take() {
+            let status = child.wait().await.context("failed to wait for vitest")?;
+            if !status.success() {
+                let _ = tx.send(TestEvent::Error {
+                    message: format!("vitest exited with code {}", status.code().unwrap_or(-1)),
+                });
+            }
         }
 
         Ok(())
@@ -196,12 +231,12 @@ impl TestRunner for VitestRunner {
         let configs = self.find_vitest_configs();
         if configs.is_empty() {
             // No configs found, run vitest from workspace root (non-Nx)
-            self.spawn_and_stream(&[], tx).await
+            self.spawn_and_stream(&[], tx, false).await
         } else {
             // Run vitest once per config (each represents a project)
             for config in &configs {
                 let config_str = config.to_string_lossy().to_string();
-                self.spawn_and_stream(&["--config", &config_str], tx.clone())
+                self.spawn_and_stream(&["--config", &config_str], tx.clone(), false)
                     .await?;
             }
             Ok(())
@@ -212,10 +247,10 @@ impl TestRunner for VitestRunner {
         let file_str = file.to_string_lossy().to_string();
         if let Some(config) = self.find_config_for_file(file) {
             let config_str = config.to_string_lossy().to_string();
-            self.spawn_and_stream(&[&file_str, "--config", &config_str], tx)
+            self.spawn_and_stream(&[&file_str, "--config", &config_str], tx, false)
                 .await
         } else {
-            self.spawn_and_stream(&[&file_str], tx).await
+            self.spawn_and_stream(&[&file_str], tx, false).await
         }
     }
 
@@ -228,10 +263,28 @@ impl TestRunner for VitestRunner {
         let file_str = file.to_string_lossy().to_string();
         if let Some(config) = self.find_config_for_file(file) {
             let config_str = config.to_string_lossy().to_string();
-            self.spawn_and_stream(&[&file_str, "--config", &config_str, "-t", test_name], tx)
-                .await
+            self.spawn_and_stream(
+                &[&file_str, "--config", &config_str, "-t", test_name],
+                tx,
+                false,
+            )
+            .await
         } else {
-            self.spawn_and_stream(&[&file_str, "-t", test_name], tx)
+            self.spawn_and_stream(&[&file_str, "-t", test_name], tx, false)
+                .await
+        }
+    }
+
+    async fn run_all_watch(&self, tx: mpsc::UnboundedSender<TestEvent>) -> Result<()> {
+        let configs = self.find_vitest_configs();
+        if configs.is_empty() {
+            self.spawn_and_stream(&[], tx, true).await
+        } else {
+            // Pass all configs. For a single config this is a simple call.
+            // For multiple configs, we pick the first one (watch mode runs
+            // a single long-lived process).
+            let config_str = configs[0].to_string_lossy().to_string();
+            self.spawn_and_stream(&["--config", &config_str], tx, true)
                 .await
         }
     }

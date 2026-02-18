@@ -34,6 +34,10 @@ pub trait TestRunner: Send + Sync {
         tx: mpsc::UnboundedSender<TestEvent>,
     ) -> Result<()>;
 
+    /// Run all tests in watch mode (re-runs on file changes).
+    /// The process stays alive until the task is aborted.
+    async fn run_all_watch(&self, tx: mpsc::UnboundedSender<TestEvent>) -> Result<()>;
+
     /// Display name for this runner (e.g., "Vitest").
     fn name(&self) -> &str;
 }

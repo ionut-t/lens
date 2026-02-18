@@ -44,6 +44,8 @@ pub enum TestEvent {
     Error {
         message: String,
     },
+    /// Watch process exited (either normally or with error).
+    WatchStopped,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +97,7 @@ pub struct App {
     pub running: bool,
     pub full_run: bool,
     pub watch_mode: bool,
+    pub watch_handle: Option<tokio::task::JoinHandle<()>>,
     pub progress_total: usize,
     pub progress_done: usize,
     pub event_tx: mpsc::UnboundedSender<TestEvent>,
@@ -124,6 +127,7 @@ impl App {
             running: false,
             full_run: false,
             watch_mode: false,
+            watch_handle: None,
             progress_total: 0,
             progress_done: 0,
             event_tx,
@@ -397,6 +401,11 @@ impl App {
             }
             TestEvent::Error { message } => {
                 self.output_lines.push(format!("[ERROR] {}", message));
+            }
+            TestEvent::WatchStopped => {
+                self.watch_mode = false;
+                self.watch_handle = None;
+                self.running = false;
             }
         }
     }
