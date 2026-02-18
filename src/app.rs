@@ -165,12 +165,7 @@ impl App {
             },
             Action::NavigateDown => match self.active_panel {
                 Panel::TestTree => {
-                    let visible = if self.filter_query.is_empty() {
-                        self.tree.visible_nodes()
-                    } else {
-                        self.tree.visible_nodes_filtered(&self.filter_query)
-                    };
-                    let max = visible.len().saturating_sub(1);
+                    let max = self.visible_tree_nodes().len().saturating_sub(1);
                     self.selected_tree_index = (self.selected_tree_index + 1).min(max);
                     self.detail_scroll_offset = 0;
                     self.adjust_tree_scroll();
@@ -188,7 +183,7 @@ impl App {
             Action::Expand => {
                 if self.active_panel == Panel::TestTree
                     && let Some(&(node_id, _)) =
-                        self.tree.visible_nodes().get(self.selected_tree_index)
+                        self.visible_tree_nodes().get(self.selected_tree_index)
                     && let Some(node) = self.tree.get(node_id)
                     && !node.children.is_empty()
                 {
@@ -198,7 +193,7 @@ impl App {
             Action::Select => {
                 if self.active_panel == Panel::TestTree
                     && let Some(&(node_id, _)) =
-                        self.tree.visible_nodes().get(self.selected_tree_index)
+                        self.visible_tree_nodes().get(self.selected_tree_index)
                     && let Some(node) = self.tree.get(node_id)
                 {
                     match node.kind {
@@ -226,7 +221,7 @@ impl App {
             Action::Collapse => {
                 if self.active_panel == Panel::TestTree
                     && let Some(&(node_id, _)) =
-                        self.tree.visible_nodes().get(self.selected_tree_index)
+                        self.visible_tree_nodes().get(self.selected_tree_index)
                     && let Some(node) = self.tree.get(node_id)
                 {
                     if node.expanded && !node.children.is_empty() {
@@ -236,8 +231,7 @@ impl App {
                         self.tree.toggle_expanded(parent_id);
                         // Move selection to parent
                         if let Some(pos) = self
-                            .tree
-                            .visible_nodes()
+                            .visible_tree_nodes()
                             .iter()
                             .position(|&(id, _)| id == parent_id)
                         {
@@ -526,10 +520,18 @@ impl App {
         (file_path, test_name)
     }
 
+    /// Returns visible nodes respecting the current filter query.
+    pub fn visible_tree_nodes(&self) -> Vec<(usize, usize)> {
+        if self.filter_query.is_empty() {
+            self.tree.visible_nodes()
+        } else {
+            self.tree.visible_nodes_filtered(&self.filter_query)
+        }
+    }
+
     /// Get the currently selected node id in the test tree (if any).
     pub fn selected_node_id(&self) -> Option<usize> {
-        self.tree
-            .visible_nodes()
+        self.visible_tree_nodes()
             .get(self.selected_tree_index)
             .map(|&(id, _)| id)
     }

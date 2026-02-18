@@ -25,11 +25,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let inner_height = block.inner(area).height as usize;
     app.tree_viewport_height = inner_height;
 
-    let visible = if app.filter_query.is_empty() {
-        app.tree.visible_nodes()
-    } else {
-        app.tree.visible_nodes_filtered(&app.filter_query)
-    };
+    let visible = app.visible_tree_nodes();
     let end = (app.tree_scroll_offset + inner_height).min(visible.len());
     let items: Vec<ListItem> = visible[app.tree_scroll_offset..end]
         .iter()
