@@ -92,7 +92,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                 }
                                 other => {
                                     app.handle_action(other);
-                                    if let Some(pending) = app.pending_run.take() {
+                                    for pending in app.pending_runs.drain(..) {
                                         app.running = true;
                                         let tx = app.event_tx.clone();
                                         let r = Arc::clone(&runner);

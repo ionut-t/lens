@@ -93,7 +93,7 @@ pub struct App {
     pub progress_done: usize,
     pub event_tx: mpsc::UnboundedSender<TestEvent>,
     pub output_lines: Vec<String>,
-    pub pending_run: Option<PendingRun>,
+    pub pending_runs: Vec<PendingRun>,
     pub should_quit: bool,
     pub filter_active: bool,
     pub filter_query: String,
@@ -120,7 +120,7 @@ impl App {
             progress_done: 0,
             event_tx,
             output_lines: Vec::new(),
-            pending_run: None,
+            pending_runs: Vec::new(),
             should_quit: false,
             filter_active: false,
             filter_query: String::new(),
@@ -196,12 +196,12 @@ impl App {
                         NodeKind::File => {
                             let abs_path = self.resolve_file_path(node_id);
                             self.set_running_status(node_id);
-                            self.pending_run = Some(PendingRun::File(abs_path));
+                            self.pending_runs.push(PendingRun::File(abs_path));
                         }
                         NodeKind::Test | NodeKind::Suite => {
                             let (file_path, test_name) = self.resolve_test_path(node_id);
                             self.set_running_status(node_id);
-                            self.pending_run = Some(PendingRun::Test {
+                            self.pending_runs.push(PendingRun::Test {
                                 file: file_path,
                                 name: test_name,
                             });
@@ -247,7 +247,21 @@ impl App {
                 // Handled by main.rs via pending_run
             }
             Action::RerunFailed => {
-                // Will be implemented in Phase 6
+                let failed_ids = self.tree.failed_nodes();
+                if failed_ids.is_empty() {
+                    return;
+                }
+                let mut seen_files = std::collections::HashSet::new();
+                for &node_id in &failed_ids {
+                    let (file_path, _) = self.resolve_test_path(node_id);
+                    if seen_files.insert(file_path.clone()) {
+                        self.pending_runs.push(PendingRun::File(file_path));
+                    }
+                }
+                for &node_id in &failed_ids {
+                    self.set_running_status(node_id);
+                }
+                self.running = true;
             }
             Action::ToggleWatch => {
                 self.watch_mode = !self.watch_mode;
