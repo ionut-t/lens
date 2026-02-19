@@ -243,6 +243,7 @@ fn map_key(key: KeyEvent) -> Option<Action> {
     match key.code {
         KeyCode::Char('q') => Some(Action::Quit),
         KeyCode::Tab => Some(Action::FocusNext),
+        KeyCode::BackTab => Some(Action::FocusPrevious),
         KeyCode::Up | KeyCode::Char('k') => Some(Action::NavigateUp),
         KeyCode::Down | KeyCode::Char('j') => Some(Action::NavigateDown),
         KeyCode::Right | KeyCode::Char('l') => Some(Action::Expand),

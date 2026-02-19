@@ -63,6 +63,7 @@ pub enum Panel {
 pub enum Action {
     Quit,
     FocusNext,
+    FocusPrevious,
     NavigateUp,
     NavigateDown,
     Expand,
@@ -158,6 +159,13 @@ impl App {
                     Panel::TestTree => Panel::FailedList,
                     Panel::FailedList => Panel::Detail,
                     Panel::Detail => Panel::TestTree,
+                };
+            }
+            Action::FocusPrevious => {
+                self.active_panel = match self.active_panel {
+                    Panel::TestTree => Panel::Detail,
+                    Panel::FailedList => Panel::TestTree,
+                    Panel::Detail => Panel::FailedList,
                 };
             }
             Action::NavigateUp => match self.active_panel {
