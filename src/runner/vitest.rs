@@ -354,16 +354,16 @@ impl TestRunner for VitestRunner {
     async fn run_file(&self, file: &Path, tx: mpsc::UnboundedSender<TestEvent>) -> Result<()> {
         let file_str = file.to_string_lossy().to_string();
         if let Some(config) = self.find_config_for_file(file) {
-            let project_dir = config.parent().map(|p| p.to_path_buf());
-            let config_str = config.to_string_lossy().to_string();
-            self.spawn_and_stream(
-                &[&file_str, "--config", &config_str],
-                tx,
-                false,
-                None,
-                project_dir.as_deref(),
-            )
-            .await
+            let reporter_file = self.write_reporter()?;
+            let reporter_path = reporter_file.path().to_string_lossy().to_string();
+            let workspace_config = self.write_workspace_config(&[config], &reporter_path)?;
+            let ws_path = workspace_config.path().to_path_buf();
+            let result = self
+                .spawn_and_stream(&[&file_str], tx, false, Some(&ws_path), None)
+                .await;
+            drop(workspace_config);
+            drop(reporter_file);
+            result
         } else {
             self.spawn_and_stream(&[&file_str], tx, false, None, None)
                 .await
@@ -378,16 +378,22 @@ impl TestRunner for VitestRunner {
     ) -> Result<()> {
         let file_str = file.to_string_lossy().to_string();
         if let Some(config) = self.find_config_for_file(file) {
-            let project_dir = config.parent().map(|p| p.to_path_buf());
-            let config_str = config.to_string_lossy().to_string();
-            self.spawn_and_stream(
-                &[&file_str, "--config", &config_str, "-t", test_name],
-                tx,
-                false,
-                None,
-                project_dir.as_deref(),
-            )
-            .await
+            let reporter_file = self.write_reporter()?;
+            let reporter_path = reporter_file.path().to_string_lossy().to_string();
+            let workspace_config = self.write_workspace_config(&[config], &reporter_path)?;
+            let ws_path = workspace_config.path().to_path_buf();
+            let result = self
+                .spawn_and_stream(
+                    &[&file_str, "-t", test_name],
+                    tx,
+                    false,
+                    Some(&ws_path),
+                    None,
+                )
+                .await;
+            drop(workspace_config);
+            drop(reporter_file);
+            result
         } else {
             self.spawn_and_stream(&[&file_str, "-t", test_name], tx, false, None, None)
                 .await
