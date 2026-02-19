@@ -31,6 +31,7 @@ export default class LensReporter {
   }
 
   onTestRunStart(specifications) {
+    this._startTime = Date.now();
     this._emit({ type: "run-started", total: specifications.length });
   }
 
@@ -122,9 +123,6 @@ export default class LensReporter {
         if (r.state === "passed") passed += 1;
         else if (r.state === "failed") failed += 1;
         else if (r.state === "skipped") skipped += 1;
-
-        const d = test.diagnostic();
-        if (d?.duration) duration += d.duration;
       }
     }
 
@@ -134,7 +132,7 @@ export default class LensReporter {
       passed,
       failed,
       skipped,
-      duration: Math.round(duration),
+      duration: Date.now() - (this._startTime || Date.now()),
     });
   }
 

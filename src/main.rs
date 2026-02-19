@@ -122,6 +122,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                             match action {
                                 Action::RunAll => {
                                     app.handle_action(action);
+                                    app.run_start = Some(std::time::Instant::now());
                                     let tx = app.event_tx.clone();
                                     let r = Arc::clone(&runner);
                                     tokio::spawn(async move {
@@ -160,6 +161,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                     app.handle_action(other);
                                     for pending in app.pending_runs.drain(..) {
                                         app.running = true;
+                                        app.run_start = Some(std::time::Instant::now());
                                         let tx = app.event_tx.clone();
                                         let r = Arc::clone(&runner);
                                         match pending {

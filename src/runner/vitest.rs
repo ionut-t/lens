@@ -549,7 +549,7 @@ impl VitestEvent {
                     passed,
                     failed,
                     skipped,
-                    duration_ms: duration,
+                    duration,
                 },
             }),
         }

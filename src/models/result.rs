@@ -25,5 +25,5 @@ pub struct RunSummary {
     pub passed: usize,
     pub failed: usize,
     pub skipped: usize,
-    pub duration_ms: u64,
+    pub duration: u64,
 }

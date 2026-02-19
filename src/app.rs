@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use tokio::sync::mpsc;
 
-use crate::models::{FailureDetail, NodeKind, RunSummary, TestResult, TestStatus, TestTree};
+use crate::models::{NodeKind, RunSummary, TestStatus, TestTree};
 
 /// Events streamed from test runner adapters into the app.
 #[derive(Debug)]
@@ -70,8 +70,6 @@ pub enum Action {
     Collapse,
     Select,
     RunAll,
-    RunFile { path: PathBuf },
-    RunTest { path: PathBuf, name: String },
     RerunFailed,
     ToggleWatch,
     FilterEnter,
@@ -115,6 +113,8 @@ pub struct App {
     pub filter_query: String,
     pub discovering: bool,
     pub spinner_tick: usize,
+    pub summary: Option<RunSummary>,
+    pub run_start: Option<std::time::Instant>,
 }
 
 impl App {
@@ -146,6 +146,8 @@ impl App {
             filter_query: String::new(),
             discovering: true,
             spinner_tick: 0,
+            summary: None,
+            run_start: None,
         };
         (app, event_rx)
     }
@@ -154,6 +156,7 @@ impl App {
     pub fn handle_action(&mut self, action: Action) {
         match action {
             Action::Quit => self.should_quit = true,
+
             Action::FocusNext => {
                 self.active_panel = match self.active_panel {
                     Panel::TestTree => Panel::FailedList,
@@ -161,6 +164,7 @@ impl App {
                     Panel::Detail => Panel::TestTree,
                 };
             }
+
             Action::FocusPrevious => {
                 self.active_panel = match self.active_panel {
                     Panel::TestTree => Panel::Detail,
@@ -168,21 +172,25 @@ impl App {
                     Panel::Detail => Panel::FailedList,
                 };
             }
+
             Action::NavigateUp => match self.active_panel {
                 Panel::TestTree => {
                     self.selected_tree_index = self.selected_tree_index.saturating_sub(1);
                     self.detail_scroll_offset = 0;
                     self.adjust_tree_scroll();
                 }
+
                 Panel::FailedList => {
                     self.selected_failed_index = self.selected_failed_index.saturating_sub(1);
                     self.detail_scroll_offset = 0;
                     self.adjust_failed_scroll();
                 }
+
                 Panel::Detail => {
                     self.detail_scroll_offset = self.detail_scroll_offset.saturating_sub(1);
                 }
             },
+
             Action::NavigateDown => match self.active_panel {
                 Panel::TestTree => {
                     let max = self.visible_tree_nodes().len().saturating_sub(1);
@@ -190,16 +198,19 @@ impl App {
                     self.detail_scroll_offset = 0;
                     self.adjust_tree_scroll();
                 }
+
                 Panel::FailedList => {
                     let max = self.tree.failed_nodes().len().saturating_sub(1);
                     self.selected_failed_index = (self.selected_failed_index + 1).min(max);
                     self.detail_scroll_offset = 0;
                     self.adjust_failed_scroll();
                 }
+
                 Panel::Detail => {
                     self.detail_scroll_offset = self.detail_scroll_offset.saturating_add(1);
                 }
             },
+
             Action::Expand => {
                 if self.active_panel == Panel::TestTree
                     && let Some(&(node_id, _)) =
@@ -210,6 +221,7 @@ impl App {
                     self.tree.toggle_expanded(node_id);
                 }
             }
+
             Action::Select => {
                 if self.active_panel == Panel::TestTree
                     && let Some(&(node_id, _)) =
@@ -266,9 +278,7 @@ impl App {
                 self.running = true;
                 self.full_run = true;
             }
-            Action::RunFile { .. } | Action::RunTest { .. } => {
-                // Handled by main.rs via pending_run
-            }
+
             Action::RerunFailed => {
                 let failed_ids = self.tree.failed_nodes();
                 if failed_ids.is_empty() {
@@ -286,27 +296,34 @@ impl App {
                 }
                 self.running = true;
             }
+
             Action::ToggleWatch => {
                 self.watch_mode = !self.watch_mode;
             }
+
             Action::FilterEnter => {
                 self.filter_active = true;
             }
+
             Action::FilterInput(c) => {
                 self.filter_query.push(c);
                 self.selected_tree_index = 0;
                 self.tree_scroll_offset = 0;
             }
+
             Action::FilterBackspace => {
                 self.filter_query.pop();
             }
+
             Action::FilterExit => {
                 self.filter_query.clear();
                 self.filter_active = false;
             }
+
             Action::FilterApply => {
                 self.filter_active = false;
             }
+
             Action::OpenInEditor => {
                 if let Some(node_id) = self.selected_node_id() {
                     let node = self.tree.get(node_id);
@@ -351,10 +368,12 @@ impl App {
                 self.progress_done = 0;
                 self.running = true;
             }
+
             TestEvent::FileStarted { path } => {
                 let file_name = self.file_display_name(&path);
                 self.find_or_create_file_node(&file_name, &path);
             }
+
             TestEvent::TestStarted { file, name } => {
                 let file_name = self.file_display_name(&file);
                 let file_id = self.find_or_create_file_node(&file_name, &file);
@@ -363,6 +382,7 @@ impl App {
                     node.status = TestStatus::Running;
                 }
             }
+
             TestEvent::TestFinished {
                 file,
                 name,
@@ -388,6 +408,7 @@ impl App {
                     node.location = Some(loc);
                 }
             }
+
             TestEvent::SuiteLocation {
                 file,
                 name,
@@ -400,11 +421,20 @@ impl App {
                     node.location = Some(location);
                 }
             }
+
             TestEvent::FileFinished { .. } => {}
-            TestEvent::RunFinished { .. } => {
+
+            TestEvent::RunFinished { mut summary } => {
                 self.running = false;
                 self.full_run = false;
+                summary.duration = self
+                    .run_start
+                    .map(|start| start.elapsed().as_millis() as u64)
+                    .unwrap_or(summary.duration);
+
+                self.summary = Some(summary);
             }
+
             TestEvent::ConsoleLog { file, content } => {
                 let file_name = self.file_display_name(&file);
                 let file_id = self.find_or_create_file_node(&file_name, &file);
@@ -412,17 +442,21 @@ impl App {
                     node.console_output.push(content);
                 }
             }
+
             TestEvent::Output { line } => {
                 self.output_lines.push(line);
             }
+
             TestEvent::Error { message } => {
                 self.output_lines.push(format!("[ERROR] {}", message));
             }
+
             TestEvent::WatchStopped => {
                 self.watch_mode = false;
                 self.watch_handle = None;
                 self.running = false;
             }
+
             TestEvent::DiscoveryComplete { files } => {
                 for display in &files {
                     self.find_or_create_file_node(display, display);
@@ -575,6 +609,10 @@ impl App {
         }
     }
 
+    pub fn test_summary(&self) -> Option<&RunSummary> {
+        self.summary.as_ref()
+    }
+
     pub fn progress_percent(&self) -> f64 {
         if self.progress_total == 0 {
             0.0
@@ -606,220 +644,5 @@ impl App {
             self.failed_scroll_offset =
                 self.selected_failed_index - self.failed_viewport_height + 1;
         }
-    }
-
-    /// Populate the tree with mock data for visual testing.
-    pub fn load_mock_data(&mut self) {
-        let src = self.tree.add_root(
-            NodeKind::File,
-            "src/components".into(),
-            Some(PathBuf::from("src/components")),
-        );
-
-        // Button.test.tsx
-        let button_file = self.tree.add_child(
-            src,
-            NodeKind::File,
-            "Button.test.tsx".into(),
-            Some(PathBuf::from("src/components/Button.test.tsx")),
-        );
-
-        let t1 = self.tree.add_child(
-            button_file,
-            NodeKind::Test,
-            "should render test".into(),
-            None,
-        );
-        self.tree.update_result(
-            t1,
-            TestResult {
-                status: TestStatus::Passed,
-                duration_ms: Some(12),
-                failure: None,
-            },
-        );
-
-        let t2 = self
-            .tree
-            .add_child(button_file, NodeKind::Test, "renderButton".into(), None);
-        self.tree.update_result(
-            t2,
-            TestResult {
-                status: TestStatus::Passed,
-                duration_ms: Some(8),
-                failure: None,
-            },
-        );
-
-        let t3 = self
-            .tree
-            .add_child(button_file, NodeKind::Test, "renderCollects".into(), None);
-        self.tree.update_result(
-            t3,
-            TestResult {
-                status: TestStatus::Passed,
-                duration_ms: Some(5),
-                failure: None,
-            },
-        );
-
-        let t4 = self
-            .tree
-            .add_child(button_file, NodeKind::Test, "renderTextRagin".into(), None);
-        self.tree.update_result(
-            t4,
-            TestResult {
-                status: TestStatus::Passed,
-                duration_ms: Some(3),
-                failure: None,
-            },
-        );
-
-        // Button/ directory
-        let button_dir = self.tree.add_child(
-            src,
-            NodeKind::Suite,
-            "Button/".into(),
-            Some(PathBuf::from("src/components/Button")),
-        );
-
-        let t5 = self.tree.add_child(
-            button_dir,
-            NodeKind::Test,
-            "renderButton.test.tsx".into(),
-            None,
-        );
-        self.tree.update_result(
-            t5,
-            TestResult {
-                status: TestStatus::Passed,
-                duration_ms: Some(15),
-                failure: None,
-            },
-        );
-
-        let t6 = self.tree.add_child(
-            button_dir,
-            NodeKind::Test,
-            "renderTextRagon.test.tsx".into(),
-            None,
-        );
-        self.tree.update_result(
-            t6,
-            TestResult {
-                status: TestStatus::Passed,
-                duration_ms: Some(7),
-                failure: None,
-            },
-        );
-
-        let t7 = self.tree.add_child(
-            button_dir,
-            NodeKind::Test,
-            "lidespfit.test.tsx".into(),
-            None,
-        );
-        self.tree.update_result(
-            t7,
-            TestResult {
-                status: TestStatus::Passed,
-                duration_ms: Some(4),
-                failure: None,
-            },
-        );
-
-        let t8 = self.tree.add_child(
-            button_dir,
-            NodeKind::Test,
-            "should render test".into(),
-            None,
-        );
-        self.tree.update_result(
-            t8,
-            TestResult {
-                status: TestStatus::Failed,
-                duration_ms: Some(45),
-                failure: Some(FailureDetail {
-                    message: "expected 'Submit' but received 'Click me'".into(),
-                    expected: Some("'Submit'".into()),
-                    actual: Some("'Click me'".into()),
-                    diff: Some(
-                        "- Expected: 'Submit'\n+ Actual: 'Click me'\n  return {\n+   actual: \"Submit\",\n-   <select:actual: \"Click me\" />".into(),
-                    ),
-                    source_snippet: Some(
-                        "should render test: () => {\n  const { function } = index, \"awope:ness\" = {};\n  default(test: () => {\n    default.log => tekaspawes(\"Button\"));\n  >\n});".into(),
-                    ),
-                    stack_trace: Some(
-                        "at stackTrace <ntruct> (src/components/Button.test.tsx:356:17)\nat Object.component.Adp (src/components/actualt.js:279:16)\nat Object.cultAwarebase (src/components/useraewult.js:121:11)".into(),
-                    ),
-                }),
-            },
-        );
-
-        // A few more failing tests for the failed list
-        let t9 = self.tree.add_child(
-            button_dir,
-            NodeKind::Test,
-            "should render correctly".into(),
-            None,
-        );
-        self.tree.update_result(
-            t9,
-            TestResult {
-                status: TestStatus::Failed,
-                duration_ms: Some(22),
-                failure: Some(FailureDetail {
-                    message: "Component did not render".into(),
-                    expected: None,
-                    actual: None,
-                    diff: None,
-                    source_snippet: None,
-                    stack_trace: Some(
-                        "at Object.render (src/components/Button/index.tsx:42:5)".into(),
-                    ),
-                }),
-            },
-        );
-
-        let t10 = self.tree.add_child(
-            button_dir,
-            NodeKind::Test,
-            "should handle click".into(),
-            None,
-        );
-        self.tree.update_result(
-            t10,
-            TestResult {
-                status: TestStatus::Failed,
-                duration_ms: Some(18),
-                failure: Some(FailureDetail {
-                    message: "onClick was not called".into(),
-                    expected: Some("1".into()),
-                    actual: Some("0".into()),
-                    diff: None,
-                    source_snippet: None,
-                    stack_trace: None,
-                }),
-            },
-        );
-
-        let t11 = self.tree.add_child(
-            button_file,
-            NodeKind::Test,
-            "should apply styles".into(),
-            None,
-        );
-        self.tree.update_result(
-            t11,
-            TestResult {
-                status: TestStatus::Skipped,
-                duration_ms: None,
-                failure: None,
-            },
-        );
-
-        // Set progress to simulate a partial run
-        self.progress_total = 11;
-        self.progress_done = 9;
     }
 }
