@@ -183,6 +183,7 @@ impl VitestRunner {
         tx: mpsc::UnboundedSender<TestEvent>,
         watch: bool,
         workspace_config: Option<&Path>,
+        cwd: Option<&Path>,
     ) -> Result<()> {
         let reporter_file = if workspace_config.is_none() {
             Some(self.write_reporter()?)
@@ -207,7 +208,7 @@ impl VitestRunner {
         self.log(&format!("[cmd] {:?}", cmd.as_std()));
 
         let mut child = cmd
-            .current_dir(&self.workspace)
+            .current_dir(cwd.unwrap_or(&self.workspace))
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -326,14 +327,16 @@ impl TestRunner for VitestRunner {
         let configs = self.find_vitest_configs();
         if configs.is_empty() {
             // No configs found, run vitest from workspace root (non-Nx)
-            self.spawn_and_stream(&[], tx, false, None).await
+            self.spawn_and_stream(&[], tx, false, None, None).await
         } else {
             // Generate a workspace config and run all projects in a single process
             let reporter_file = self.write_reporter()?;
             let reporter_path = reporter_file.path().to_string_lossy().to_string();
             let workspace_config = self.write_workspace_config(&configs, &reporter_path)?;
             let ws_path = workspace_config.path().to_path_buf();
-            let result = self.spawn_and_stream(&[], tx, false, Some(&ws_path)).await;
+            let result = self
+                .spawn_and_stream(&[], tx, false, Some(&ws_path), None)
+                .await;
             // Keep temp files alive until vitest exits
             drop(workspace_config);
             drop(reporter_file);
@@ -344,11 +347,19 @@ impl TestRunner for VitestRunner {
     async fn run_file(&self, file: &Path, tx: mpsc::UnboundedSender<TestEvent>) -> Result<()> {
         let file_str = file.to_string_lossy().to_string();
         if let Some(config) = self.find_config_for_file(file) {
+            let project_dir = config.parent().map(|p| p.to_path_buf());
             let config_str = config.to_string_lossy().to_string();
-            self.spawn_and_stream(&[&file_str, "--config", &config_str], tx, false, None)
-                .await
+            self.spawn_and_stream(
+                &[&file_str, "--config", &config_str],
+                tx,
+                false,
+                None,
+                project_dir.as_deref(),
+            )
+            .await
         } else {
-            self.spawn_and_stream(&[&file_str], tx, false, None).await
+            self.spawn_and_stream(&[&file_str], tx, false, None, None)
+                .await
         }
     }
 
@@ -360,16 +371,18 @@ impl TestRunner for VitestRunner {
     ) -> Result<()> {
         let file_str = file.to_string_lossy().to_string();
         if let Some(config) = self.find_config_for_file(file) {
+            let project_dir = config.parent().map(|p| p.to_path_buf());
             let config_str = config.to_string_lossy().to_string();
             self.spawn_and_stream(
                 &[&file_str, "--config", &config_str, "-t", test_name],
                 tx,
                 false,
                 None,
+                project_dir.as_deref(),
             )
             .await
         } else {
-            self.spawn_and_stream(&[&file_str, "-t", test_name], tx, false, None)
+            self.spawn_and_stream(&[&file_str, "-t", test_name], tx, false, None, None)
                 .await
         }
     }
@@ -377,14 +390,16 @@ impl TestRunner for VitestRunner {
     async fn run_all_watch(&self, tx: mpsc::UnboundedSender<TestEvent>) -> Result<()> {
         let configs = self.find_vitest_configs();
         if configs.is_empty() {
-            self.spawn_and_stream(&[], tx, true, None).await
+            self.spawn_and_stream(&[], tx, true, None, None).await
         } else {
             // Generate a workspace config and watch all projects in a single process
             let reporter_file = self.write_reporter()?;
             let reporter_path = reporter_file.path().to_string_lossy().to_string();
             let workspace_config = self.write_workspace_config(&configs, &reporter_path)?;
             let ws_path = workspace_config.path().to_path_buf();
-            let result = self.spawn_and_stream(&[], tx, true, Some(&ws_path)).await;
+            let result = self
+                .spawn_and_stream(&[], tx, true, Some(&ws_path), None)
+                .await;
             // Keep temp files alive until vitest exits
             drop(workspace_config);
             drop(reporter_file);
