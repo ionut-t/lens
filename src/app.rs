@@ -115,6 +115,7 @@ pub struct App {
     pub spinner_tick: usize,
     pub summary: Option<RunSummary>,
     pub run_start: Option<std::time::Instant>,
+    pub project_name: Option<String>,
 }
 
 impl App {
@@ -148,6 +149,7 @@ impl App {
             spinner_tick: 0,
             summary: None,
             run_start: None,
+            project_name: None,
         };
         (app, event_rx)
     }

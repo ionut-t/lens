@@ -62,16 +62,18 @@ fn resolve_nx_project(workspace: &Path, name: &str) -> Result<PathBuf> {
 
 async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let project = std::env::args().nth(1);
 
     // If a project name is passed, scope to that project's directory
-    let project_root = if let Some(project_name) = std::env::args().nth(1) {
-        Some(resolve_nx_project(&workspace, &project_name)?)
+    let project_root = if let Some(project_name) = &project {
+        Some(resolve_nx_project(&workspace, project_name)?)
     } else {
         None
     };
 
     let discover_root = project_root.as_deref().unwrap_or(&workspace).to_path_buf();
     let (mut app, mut event_rx) = App::new(workspace.clone());
+    app.project_name = project;
     let mut tick = interval(Duration::from_millis(100));
     let runner: Arc<dyn TestRunner> = Arc::new(VitestRunner::new(workspace.clone(), project_root));
 

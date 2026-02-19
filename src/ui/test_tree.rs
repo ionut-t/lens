@@ -16,8 +16,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         Style::default().fg(Color::DarkGray)
     };
 
+    let title = match &app.project_name {
+        Some(name) => format!(" Tests — {} ", name),
+        None => " Tests ".to_string(),
+    };
+
     let block = Block::default()
-        .title(" Tests ")
+        .title(title)
         .borders(Borders::ALL)
         .border_style(border_style);
 
