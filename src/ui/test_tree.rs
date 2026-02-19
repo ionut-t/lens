@@ -45,7 +45,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 NodeKind::Test => match node.status {
                     TestStatus::Passed => "✔ ",
                     TestStatus::Failed => "✘ ",
-                    TestStatus::Running => "⟳ ",
+                    TestStatus::Running => {
+                        const FRAMES: &[&str] =
+                            &["⠋ ", "⠙ ", "⠹ ", "⠸ ", "⠼ ", "⠴ ", "⠦ ", "⠧ ", "⠇ ", "⠏ "];
+                        FRAMES[app.spinner_tick % FRAMES.len()]
+                    }
                     TestStatus::Skipped => "⊘ ",
                     TestStatus::Pending => "◌ ",
                 },
