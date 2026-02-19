@@ -5,7 +5,7 @@ use ratatui::{
 
 use crate::{
     app::{App, Panel},
-    models::{NodeKind, TestStatus},
+    models::{NodeKind, TestNode, TestStatus},
 };
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -75,10 +75,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 Style::default()
             };
 
+            let name = node_display_name(app.project_name.as_ref(), node);
+
             let content = Line::from(vec![
                 Span::raw(indent),
                 Span::styled(icon, Style::default().fg(status_color)),
-                Span::styled(&node.name, name_style),
+                Span::styled(name, name_style),
             ]);
 
             ListItem::new(content)
@@ -87,4 +89,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let list = List::new(items).block(block);
     frame.render_widget(list, area);
+}
+
+fn node_display_name<'a>(project: Option<&'a String>, node: &'a TestNode) -> &'a str {
+    if let Some(project_name) = project
+        && node.kind == NodeKind::File
+    {
+        let prefix = if node.name.contains("src") {
+            format!("{project_name}/src/")
+        } else {
+            format!("{project_name}/")
+        };
+
+        node.name
+            .split_once(&prefix)
+            .map(|(_, suffix)| suffix)
+            .unwrap_or(&node.name)
+    } else {
+        &node.name
+    }
 }
