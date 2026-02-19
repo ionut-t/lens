@@ -119,7 +119,7 @@ impl VitestRunner {
             .join(",\n");
 
         let content = format!(
-            "export default {{\n  test: {{\n    reporters: ['{}'],\n    projects: [\n{}\n    ]\n  }}\n}}\n",
+            "export default {{\n  test: {{\n    reporters: ['{}'],\n    coverage: {{ enabled: false }},\n    projects: [\n{}\n    ]\n  }}\n}}\n",
             reporter_path.replace('\\', "/"),
             projects_json,
         );
