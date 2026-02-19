@@ -2,11 +2,18 @@ use ratatui::{prelude::*, widgets::Paragraph};
 
 use crate::app::App;
 
+const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let watch_indicator = if app.watch_mode { " [watch] " } else { "" };
-    let running_indicator = if app.running { " running..." } else { "" };
 
-    let bar = if app.filter_active {
+    let bar = if app.discovering {
+        let spinner = SPINNER_FRAMES[app.spinner_tick % SPINNER_FRAMES.len()];
+        Line::from(vec![Span::styled(
+            format!(" {} Discovering tests...", spinner),
+            Style::default().fg(Color::Yellow),
+        )])
+    } else if app.filter_active {
         Line::from(vec![
             Span::styled(" [esc]", Style::default().fg(Color::Yellow)),
             Span::raw(" clear  "),
@@ -28,7 +35,15 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled("[q]", Style::default().fg(Color::Yellow)),
             Span::raw(" quit"),
             Span::styled(watch_indicator, Style::default().fg(Color::Cyan)),
-            Span::styled(running_indicator, Style::default().fg(Color::Yellow)),
+            if app.running {
+                let spinner = SPINNER_FRAMES[app.spinner_tick % SPINNER_FRAMES.len()];
+                Span::styled(
+                    format!(" {} running...", spinner),
+                    Style::default().fg(Color::Yellow),
+                )
+            } else {
+                Span::styled("", Style::default())
+            },
         ])
     };
 

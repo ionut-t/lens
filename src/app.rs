@@ -46,6 +46,10 @@ pub enum TestEvent {
     },
     /// Watch process exited (either normally or with error).
     WatchStopped,
+    /// Test file discovery completed.
+    DiscoveryComplete {
+        files: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,6 +112,8 @@ pub struct App {
     pub should_quit: bool,
     pub filter_active: bool,
     pub filter_query: String,
+    pub discovering: bool,
+    pub spinner_tick: usize,
 }
 
 impl App {
@@ -137,6 +143,8 @@ impl App {
             should_quit: false,
             filter_active: false,
             filter_query: String::new(),
+            discovering: true,
+            spinner_tick: 0,
         };
         (app, event_rx)
     }
@@ -406,6 +414,12 @@ impl App {
                 self.watch_mode = false;
                 self.watch_handle = None;
                 self.running = false;
+            }
+            TestEvent::DiscoveryComplete { files } => {
+                for display in &files {
+                    self.find_or_create_file_node(display, display);
+                }
+                self.discovering = false;
             }
         }
     }

@@ -43,17 +43,26 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
     let mut tick = interval(Duration::from_millis(100));
     let runner: Arc<dyn TestRunner> = Arc::new(VitestRunner::new(workspace.clone()));
 
-    // Discover test files and populate the tree on startup
-    if let Ok(files) = runner.discover(&workspace).await {
-        for file in &files {
-            let display = file
-                .path
-                .strip_prefix(&workspace)
-                .unwrap_or(&file.path)
-                .to_string_lossy()
-                .to_string();
-            app.find_or_create_file_node(&display, &display);
-        }
+    // Discover test files asynchronously so the UI renders immediately
+    {
+        let tx = app.event_tx.clone();
+        let r = Arc::clone(&runner);
+        let ws = workspace.clone();
+        tokio::spawn(async move {
+            if let Ok(files) = r.discover(&ws).await {
+                let displays: Vec<String> = files
+                    .iter()
+                    .map(|f| {
+                        f.path
+                            .strip_prefix(&ws)
+                            .unwrap_or(&f.path)
+                            .to_string_lossy()
+                            .to_string()
+                    })
+                    .collect();
+                let _ = tx.send(app::TestEvent::DiscoveryComplete { files: displays });
+            }
+        });
     }
 
     loop {
@@ -151,7 +160,11 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                 app.handle_test_event(test_event);
             }
 
-            _ = tick.tick() => {}
+            _ = tick.tick() => {
+                if app.discovering || app.running {
+                    app.spinner_tick = app.spinner_tick.wrapping_add(1);
+                }
+            }
         }
 
         if let Some((path, line, col)) = app.pending_editor.take() {
