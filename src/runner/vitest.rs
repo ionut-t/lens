@@ -210,10 +210,12 @@ impl VitestRunner {
         }
 
         // Log the full command for debugging (LENS_DEBUG=path)
+        let effective_cwd = cwd.unwrap_or(&self.workspace);
         self.log(&format!("[cmd] {:?}", cmd.as_std()));
+        self.log(&format!("[cwd] {:?}", effective_cwd));
 
         let mut child = cmd
-            .current_dir(cwd.unwrap_or(&self.workspace))
+            .current_dir(effective_cwd)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
