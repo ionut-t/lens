@@ -138,44 +138,18 @@ impl TestTree {
         }
     }
 
-    /// Returns visible nodes filtered by a case-insensitive substring match.
-    /// Matching leaf nodes include their ancestor chain for tree structure context.
+    /// Returns visible nodes filtered by a case-insensitive substring match on file names.
+    /// Only root (file) nodes are matched against the query; matching files show all children.
     pub fn visible_nodes_filtered(&self, query: &str) -> Vec<(usize, usize)> {
         let query_lower = query.to_lowercase();
         let mut result = Vec::new();
         for &root_id in &self.root_ids {
-            if self.subtree_matches(root_id, &query_lower) {
-                self.collect_visible_filtered(root_id, 0, &query_lower, &mut result);
+            let node = &self.nodes[root_id];
+            if node.name.to_lowercase().contains(&query_lower) {
+                self.collect_visible(root_id, 0, &mut result);
             }
         }
         result
-    }
-
-    /// Returns true if the node or any descendant matches the query.
-    fn subtree_matches(&self, id: usize, query_lower: &str) -> bool {
-        let node = &self.nodes[id];
-        if node.name.to_lowercase().contains(query_lower) {
-            return true;
-        }
-        node.children
-            .iter()
-            .any(|&cid| self.subtree_matches(cid, query_lower))
-    }
-
-    fn collect_visible_filtered(
-        &self,
-        id: usize,
-        depth: usize,
-        query_lower: &str,
-        result: &mut Vec<(usize, usize)>,
-    ) {
-        result.push((id, depth));
-        let node = &self.nodes[id];
-        for &child_id in &node.children {
-            if self.subtree_matches(child_id, query_lower) {
-                self.collect_visible_filtered(child_id, depth + 1, query_lower, result);
-            }
-        }
     }
 
     /// Toggle the expanded state of a node. Returns the new state.
