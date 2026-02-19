@@ -36,16 +36,48 @@ impl Drop for ChildGuard {
 
 const REPORTER_SOURCE: &str = include_str!("../../reporters/vitest-reporter.mjs");
 
+/// Open a debug log file if `LENS_DEBUG` env var is set.
+type LogFile = std::sync::Arc<std::sync::Mutex<std::fs::File>>;
+
+fn open_log_file() -> Option<LogFile> {
+    std::env::var("LENS_DEBUG").ok().and_then(|path| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path)
+            .ok()
+            .map(|f| std::sync::Arc::new(std::sync::Mutex::new(f)))
+    })
+}
+
+fn write_log(lf: &LogFile, msg: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = lf.lock() {
+        let _ = writeln!(f, "{}", msg);
+    }
+}
+
 /// Vitest adapter that spawns vitest with a custom NDJSON reporter.
 /// For Nx workspaces, finds vite/vitest configs and runs vitest directly
 /// with `--config` to bypass nx's output buffering.
 pub struct VitestRunner {
     workspace: PathBuf,
+    log_file: Option<LogFile>,
 }
 
 impl VitestRunner {
     pub fn new(workspace: PathBuf) -> Self {
-        Self { workspace }
+        Self {
+            workspace,
+            log_file: open_log_file(),
+        }
+    }
+
+    fn log(&self, msg: &str) {
+        if let Some(ref lf) = self.log_file {
+            write_log(lf, msg);
+        }
     }
 
     /// Write the embedded reporter to a temp file and return its path.
@@ -171,6 +203,9 @@ impl VitestRunner {
             cmd.arg(format!("--reporter={}", rf.path().to_string_lossy()));
         }
 
+        // Log the full command for debugging (LENS_DEBUG=path)
+        self.log(&format!("[cmd] {:?}", cmd.as_std()));
+
         let mut child = cmd
             .current_dir(&self.workspace)
             .stdin(std::process::Stdio::null())
@@ -189,10 +224,14 @@ impl VitestRunner {
 
         // Read stderr in background for error reporting
         let tx_err = tx.clone();
+        let log_err = self.log_file.clone();
         let stderr_handle = tokio::spawn(async move {
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
+                if let Some(ref lf) = log_err {
+                    write_log(lf, &format!("[stderr] {}", line));
+                }
                 let _ = tx_err.send(TestEvent::Output { line });
             }
         });
@@ -206,6 +245,8 @@ impl VitestRunner {
             if line.is_empty() {
                 continue;
             }
+
+            self.log(&format!("[stdout] {}", line));
 
             match serde_json::from_str::<VitestEvent>(&line) {
                 Ok(event) => {
