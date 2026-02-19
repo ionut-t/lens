@@ -4,10 +4,10 @@ mod runner;
 mod ui;
 
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use crossterm::{
     ExecutableCommand,
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -37,8 +37,40 @@ async fn main() -> Result<()> {
     result
 }
 
+/// Resolve an Nx project name to its root directory (relative to workspace).
+fn resolve_nx_project(workspace: &Path, name: &str) -> Result<PathBuf> {
+    let output = std::process::Command::new("npx")
+        .args(["nx", "show", "project", name, "--json"])
+        .current_dir(workspace)
+        .output()
+        .context("failed to run `npx nx show project`")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("nx project '{}' not found: {}", name, stderr.trim());
+    }
+
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).context("failed to parse nx project JSON")?;
+
+    let root = json["root"]
+        .as_str()
+        .context("nx project JSON missing 'root' field")?;
+
+    Ok(workspace.join(root))
+}
+
 async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    // If a project name is passed, scope to that project's directory
+    let project_root = if let Some(project_name) = std::env::args().nth(1) {
+        Some(resolve_nx_project(&workspace, &project_name)?)
+    } else {
+        None
+    };
+
+    let discover_root = project_root.as_deref().unwrap_or(&workspace);
     let (mut app, mut event_rx) = App::new(workspace.clone());
     let mut tick = interval(Duration::from_millis(100));
     let runner: Arc<dyn TestRunner> = Arc::new(VitestRunner::new(workspace.clone()));
@@ -48,8 +80,9 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
         let tx = app.event_tx.clone();
         let r = Arc::clone(&runner);
         let ws = workspace.clone();
+        let dr = discover_root.to_path_buf();
         tokio::spawn(async move {
-            if let Ok(files) = r.discover(&ws).await {
+            if let Ok(files) = r.discover(&dr).await {
                 let displays: Vec<String> = files
                     .iter()
                     .map(|f| {
