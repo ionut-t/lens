@@ -52,6 +52,14 @@ export default class LensReporter {
     }
   }
 
+  onTestCaseStart(testCase) {
+    this._emit({
+      type: "test-started",
+      file: testCase.module.moduleId,
+      name: testCase.fullName,
+    });
+  }
+
   onTestCaseResult(testCase) {
     const result = testCase.result();
     const diag = testCase.diagnostic();

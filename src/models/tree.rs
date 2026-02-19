@@ -4,6 +4,7 @@ use super::result::TestResult;
 use super::status::TestStatus;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum NodeKind {
     Workspace,
     Project,
@@ -90,14 +91,6 @@ impl TestTree {
 
     pub fn get_mut(&mut self, id: usize) -> Option<&mut TestNode> {
         self.nodes.get_mut(id)
-    }
-
-    pub fn root_ids(&self) -> &[usize] {
-        &self.root_ids
-    }
-
-    pub fn node_count(&self) -> usize {
-        self.nodes.len()
     }
 
     /// Find a child of `parent` with the given name, or None.

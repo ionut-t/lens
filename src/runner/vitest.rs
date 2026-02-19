@@ -436,6 +436,10 @@ enum VitestEvent {
     FileStarted {
         file: String,
     },
+    TestStarted {
+        file: String,
+        name: String,
+    },
     TestFinished {
         file: String,
         name: String,
@@ -485,6 +489,7 @@ impl VitestEvent {
         match self {
             VitestEvent::RunStarted { total } => Some(TestEvent::RunStarted { total }),
             VitestEvent::FileStarted { file } => Some(TestEvent::FileStarted { path: file }),
+            VitestEvent::TestStarted { file, name } => Some(TestEvent::TestStarted { file, name }),
             VitestEvent::TestFinished {
                 file,
                 name,

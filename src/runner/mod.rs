@@ -39,5 +39,6 @@ pub trait TestRunner: Send + Sync {
     async fn run_all_watch(&self, tx: mpsc::UnboundedSender<TestEvent>) -> Result<()>;
 
     /// Display name for this runner (e.g., "Vitest").
+    #[allow(dead_code)]
     fn name(&self) -> &str;
 }

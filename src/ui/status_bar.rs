@@ -43,7 +43,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
                 format!(" {} running...", spinner),
                 Style::default().fg(Color::Yellow),
             ));
-        } else if let Some(summary) = app.test_summary() {
+        } else if let Some(summary) = &app.summary {
             let RunSummary {
                 passed,
                 failed,

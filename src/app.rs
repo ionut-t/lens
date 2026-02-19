@@ -424,7 +424,7 @@ impl App {
                 }
             }
 
-            TestEvent::FileFinished { .. } => {}
+            TestEvent::FileFinished { path: _path } => {}
 
             TestEvent::RunFinished { mut summary } => {
                 self.running = false;
@@ -609,10 +609,6 @@ impl App {
                 .get(self.selected_tree_index)
                 .map(|&(id, _)| id),
         }
-    }
-
-    pub fn test_summary(&self) -> Option<&RunSummary> {
-        self.summary.as_ref()
     }
 
     pub fn progress_percent(&self) -> f64 {
