@@ -70,10 +70,10 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
         None
     };
 
-    let discover_root = project_root.as_deref().unwrap_or(&workspace);
+    let discover_root = project_root.as_deref().unwrap_or(&workspace).to_path_buf();
     let (mut app, mut event_rx) = App::new(workspace.clone());
     let mut tick = interval(Duration::from_millis(100));
-    let runner: Arc<dyn TestRunner> = Arc::new(VitestRunner::new(workspace.clone()));
+    let runner: Arc<dyn TestRunner> = Arc::new(VitestRunner::new(workspace.clone(), project_root));
 
     // Discover test files asynchronously so the UI renders immediately
     {

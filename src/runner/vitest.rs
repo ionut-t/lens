@@ -63,13 +63,18 @@ fn write_log(lf: &LogFile, msg: &str) {
 /// with `--config` to bypass nx's output buffering.
 pub struct VitestRunner {
     workspace: PathBuf,
+    /// Root directory to search for configs and test files.
+    /// Defaults to workspace, but can be narrowed to a single project.
+    search_root: PathBuf,
     log_file: Option<LogFile>,
 }
 
 impl VitestRunner {
-    pub fn new(workspace: PathBuf) -> Self {
+    pub fn new(workspace: PathBuf, project_root: Option<PathBuf>) -> Self {
+        let search_root = project_root.unwrap_or_else(|| workspace.clone());
         Self {
             workspace,
+            search_root,
             log_file: open_log_file(),
         }
     }
@@ -152,7 +157,7 @@ impl VitestRunner {
         ];
         for name in &names {
             let pattern = self
-                .workspace
+                .search_root
                 .join("**/")
                 .join(name)
                 .to_string_lossy()
