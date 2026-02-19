@@ -38,6 +38,26 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let content = if let Some(node_id) = app.selected_node_id() {
         if let Some(node) = app.tree.get(node_id) {
             let mut lines: Vec<Line> = Vec::new();
+            let mut breadcrumbs = Vec::new();
+            let mut current = Some(node_id);
+
+            while let Some(id) = current {
+                if let Some(ancestor) = app.tree.get(id) {
+                    breadcrumbs.push(ancestor.name.clone());
+                    current = ancestor.parent;
+                } else {
+                    break;
+                }
+            }
+            breadcrumbs.reverse();
+
+            if !breadcrumbs.is_empty() {
+                lines.push(Line::from(vec![Span::styled(
+                    breadcrumbs.join(" > "),
+                    Style::default().fg(Color::DarkGray).bold(),
+                )]));
+                lines.push(Line::from(""));
+            }
 
             if node.status == TestStatus::Failed {
                 if let Some(ref result) = node.result {

@@ -554,9 +554,17 @@ impl App {
 
     /// Get the currently selected node id in the test tree (if any).
     pub fn selected_node_id(&self) -> Option<usize> {
-        self.visible_tree_nodes()
-            .get(self.selected_tree_index)
-            .map(|&(id, _)| id)
+        match self.active_panel {
+            Panel::FailedList => self
+                .tree
+                .failed_nodes()
+                .get(self.selected_failed_index)
+                .copied(),
+            _ => self
+                .visible_tree_nodes()
+                .get(self.selected_tree_index)
+                .map(|&(id, _)| id),
+        }
     }
 
     pub fn progress_percent(&self) -> f64 {
