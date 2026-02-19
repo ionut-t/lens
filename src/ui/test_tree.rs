@@ -96,11 +96,8 @@ fn node_display_name<'a>(project: Option<&'a String>, node: &'a TestNode) -> &'a
     if let Some(project_name) = project
         && node.kind == NodeKind::File
     {
-        let prefix = if node.name.contains("src") {
-            format!("{project_name}/src/")
-        } else {
-            format!("{project_name}/")
-        };
+        let common_prefix = common_prefix_to_exclude(&node.name);
+        let prefix = format!("{project_name}/{common_prefix}");
 
         node.name
             .split_once(&prefix)
@@ -108,5 +105,17 @@ fn node_display_name<'a>(project: Option<&'a String>, node: &'a TestNode) -> &'a
             .unwrap_or(&node.name)
     } else {
         &node.name
+    }
+}
+
+fn common_prefix_to_exclude(name: &str) -> &str {
+    if name.contains("/src/app/") {
+        "src/app/"
+    } else if name.contains("src/lib/") {
+        "src/lib/"
+    } else if name.contains("src/") {
+        "src/"
+    } else {
+        "/"
     }
 }
