@@ -3,15 +3,16 @@ use ratatui::{
     widgets::{Block, Borders, Gauge, Paragraph},
 };
 
+use super::theme;
 use crate::app::{App, Panel};
 use crate::models::{NodeKind, TestStatus};
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.active_panel == Panel::Detail;
     let border_style = if focused {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(theme::BLUE)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(theme::SURFACE2)
     };
 
     let block = Block::default()
@@ -29,7 +30,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Progress bar
     let percent = (app.progress_percent() * 100.0).min(100.0) as u16;
     let gauge = Gauge::default()
-        .gauge_style(Style::default().fg(Color::Green).bg(Color::DarkGray))
+        .gauge_style(Style::default().fg(theme::GREEN).bg(theme::SURFACE0))
         .percent(percent)
         .label(format!("{}%", percent));
     frame.render_widget(gauge, progress_area);
@@ -54,7 +55,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             if !breadcrumbs.is_empty() {
                 lines.push(Line::from(vec![Span::styled(
                     breadcrumbs.join(" > "),
-                    Style::default().fg(Color::DarkGray).bold(),
+                    Style::default().fg(theme::OVERLAY0).bold(),
                 )]));
                 lines.push(Line::from(""));
             }
@@ -84,13 +85,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
                     "━━ Console Output ━━",
-                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(theme::YELLOW),
                 )));
                 lines.push(Line::from(""));
                 for log_line in console_output {
                     lines.push(Line::from(Span::styled(
                         log_line.clone(),
-                        Style::default().fg(Color::Gray),
+                        Style::default().fg(theme::SUBTEXT0),
                     )));
                 }
             }
@@ -136,13 +137,13 @@ fn build_failure_text<'a>(
 ) -> Text<'a> {
     let mut lines: Vec<Line> = vec![
         Line::from(vec![
-            Span::styled("✘ failed: ", Style::default().fg(Color::Red)),
-            Span::styled(test_name, Style::default().fg(Color::Red).bold()),
+            Span::styled("✘ failed: ", Style::default().fg(theme::RED)),
+            Span::styled(test_name, Style::default().fg(theme::RED).bold()),
         ]),
         Line::from(""),
         Line::from(Span::styled(
             &failure.message,
-            Style::default().fg(Color::White),
+            Style::default().fg(theme::TEXT),
         )),
         Line::from(""),
     ];
@@ -150,14 +151,14 @@ fn build_failure_text<'a>(
     // Expected / Actual
     if let Some(ref expected) = failure.expected {
         lines.push(Line::from(vec![
-            Span::styled("  Expected: ", Style::default().fg(Color::Green)),
-            Span::styled(expected.as_str(), Style::default().fg(Color::Green)),
+            Span::styled("  Expected: ", Style::default().fg(theme::GREEN)),
+            Span::styled(expected.as_str(), Style::default().fg(theme::GREEN)),
         ]));
     }
     if let Some(ref actual) = failure.actual {
         lines.push(Line::from(vec![
-            Span::styled("  Actual:   ", Style::default().fg(Color::Red)),
-            Span::styled(actual.as_str(), Style::default().fg(Color::Red).bold()),
+            Span::styled("  Actual:   ", Style::default().fg(theme::RED)),
+            Span::styled(actual.as_str(), Style::default().fg(theme::RED).bold()),
         ]));
     }
 
@@ -169,9 +170,9 @@ fn build_failure_text<'a>(
         lines.push(Line::from(""));
         for diff_line in diff.lines() {
             let style = if diff_line.starts_with('+') {
-                Style::default().fg(Color::Green)
+                Style::default().fg(theme::GREEN)
             } else if diff_line.starts_with('-') {
-                Style::default().fg(Color::Red)
+                Style::default().fg(theme::RED)
             } else {
                 Style::default()
             };
@@ -185,7 +186,7 @@ fn build_failure_text<'a>(
         for stack_line in stack.lines() {
             lines.push(Line::from(Span::styled(
                 stack_line,
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::OVERLAY0),
             )));
         }
     }

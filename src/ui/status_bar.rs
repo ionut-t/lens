@@ -1,5 +1,6 @@
 use ratatui::{prelude::*, widgets::Paragraph};
 
+use super::theme;
 use crate::{app::App, models::RunSummary};
 
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -11,37 +12,37 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         let spinner = SPINNER_FRAMES[app.spinner_tick % SPINNER_FRAMES.len()];
         Line::from(vec![Span::styled(
             format!(" {} Discovering tests...", spinner),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(theme::YELLOW),
         )])
     } else if app.filter_active {
         Line::from(vec![
-            Span::styled(" [esc]", Style::default().fg(Color::Yellow)),
+            Span::styled(" [esc]", Style::default().fg(theme::YELLOW)),
             Span::raw(" clear  "),
-            Span::styled("[enter]", Style::default().fg(Color::Yellow)),
+            Span::styled("[enter]", Style::default().fg(theme::YELLOW)),
             Span::raw(" apply"),
         ])
     } else {
         let mut spans = vec![
-            Span::styled(" [f]", Style::default().fg(Color::Yellow)),
+            Span::styled(" [f]", Style::default().fg(theme::YELLOW)),
             Span::raw(" filter  "),
-            Span::styled("[r]", Style::default().fg(Color::Yellow)),
+            Span::styled("[r]", Style::default().fg(theme::YELLOW)),
             Span::raw(" rerun  "),
-            Span::styled("[e]", Style::default().fg(Color::Yellow)),
+            Span::styled("[e]", Style::default().fg(theme::YELLOW)),
             Span::raw(" edit  "),
-            Span::styled("[a]", Style::default().fg(Color::Yellow)),
+            Span::styled("[a]", Style::default().fg(theme::YELLOW)),
             Span::raw(" run all  "),
-            Span::styled("[w]", Style::default().fg(Color::Yellow)),
+            Span::styled("[w]", Style::default().fg(theme::YELLOW)),
             Span::raw(" watch  "),
-            Span::styled("[q]", Style::default().fg(Color::Yellow)),
+            Span::styled("[q]", Style::default().fg(theme::YELLOW)),
             Span::raw(" quit"),
-            Span::styled(watch_indicator, Style::default().fg(Color::Cyan)),
+            Span::styled(watch_indicator, Style::default().fg(theme::TEAL)),
         ];
 
         if app.running {
             let spinner = SPINNER_FRAMES[app.spinner_tick % SPINNER_FRAMES.len()];
             spans.push(Span::styled(
                 format!(" {} running...", spinner),
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(theme::YELLOW),
             ));
         } else if let Some(summary) = &app.summary {
             let RunSummary {
@@ -53,29 +54,29 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
 
             spans.push(Span::styled(
                 format!("  {:.1}s", summary.duration as f64 / 1000.0),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::OVERLAY0),
             ));
 
             if passed + failed + skipped > 0 {
-                spans.push(Span::styled(" ✔ ", Style::default().fg(Color::Green)));
+                spans.push(Span::styled(" ✔ ", Style::default().fg(theme::GREEN)));
                 spans.push(Span::styled(
                     format!("{}", passed),
-                    Style::default().fg(Color::Green),
+                    Style::default().fg(theme::GREEN),
                 ));
-                spans.push(Span::styled("  ✘ ", Style::default().fg(Color::Red)));
+                spans.push(Span::styled("  ✘ ", Style::default().fg(theme::RED)));
                 spans.push(Span::styled(
                     format!("{}", failed),
-                    Style::default().fg(Color::Red),
+                    Style::default().fg(theme::RED),
                 ));
-                spans.push(Span::styled("  ⊘ ", Style::default().fg(Color::Cyan)));
+                spans.push(Span::styled("  ⊘ ", Style::default().fg(theme::TEAL)));
                 spans.push(Span::styled(
                     format!("{}", skipped),
-                    Style::default().fg(Color::Cyan),
+                    Style::default().fg(theme::TEAL),
                 ));
 
                 spans.push(Span::styled(
                     format!("  {:.1}s", summary.duration as f64 / 1000.0),
-                    Style::default().fg(Color::LightMagenta),
+                    Style::default().fg(theme::MAUVE),
                 ));
             }
         }
@@ -83,6 +84,6 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(spans)
     };
 
-    let paragraph = Paragraph::new(bar).style(Style::default().bg(Color::DarkGray));
+    let paragraph = Paragraph::new(bar).style(Style::default().bg(theme::SURFACE0));
     frame.render_widget(paragraph, area);
 }

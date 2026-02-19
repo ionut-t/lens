@@ -3,14 +3,15 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem},
 };
 
+use super::theme;
 use crate::app::{App, Panel};
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.active_panel == Panel::FailedList;
     let border_style = if focused {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(theme::BLUE)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(theme::SURFACE2)
     };
 
     let block = Block::default()
@@ -30,13 +31,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             let absolute_i = view_i + app.failed_scroll_offset;
             let node = app.tree.get(node_id).unwrap();
             let style = if absolute_i == app.selected_failed_index && focused {
-                Style::default().bg(Color::DarkGray).fg(Color::White)
+                Style::default().bg(theme::SURFACE1).fg(theme::TEXT)
             } else {
-                Style::default().fg(Color::Red)
+                Style::default().fg(theme::RED)
             };
 
             ListItem::new(Line::from(vec![
-                Span::styled("✘ ", Style::default().fg(Color::Red)),
+                Span::styled("✘ ", Style::default().fg(theme::RED)),
                 Span::styled(&node.name, style),
             ]))
         })

@@ -3,6 +3,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem},
 };
 
+use super::theme;
 use crate::{
     app::{App, Panel},
     models::{NodeKind, TestNode, TestStatus},
@@ -11,9 +12,9 @@ use crate::{
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.active_panel == Panel::TestTree;
     let border_style = if focused {
-        Style::default().fg(Color::Cyan)
+        Style::default().fg(theme::BLUE)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(theme::SURFACE2)
     };
 
     let title = match &app.project_name {
@@ -61,18 +62,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             };
 
             let status_color = match node.status {
-                TestStatus::Passed => Color::Green,
-                TestStatus::Failed => Color::Red,
-                TestStatus::Running => Color::Yellow,
-                TestStatus::Skipped => Color::DarkGray,
-                TestStatus::Pending => Color::White,
+                TestStatus::Passed => theme::GREEN,
+                TestStatus::Failed => theme::RED,
+                TestStatus::Running => theme::YELLOW,
+                TestStatus::Skipped => theme::OVERLAY0,
+                TestStatus::Pending => theme::SUBTEXT0,
             };
 
             let selected = absolute_i == app.selected_tree_index && focused;
             let name_style = if selected {
-                Style::default().bg(Color::DarkGray).fg(Color::White)
+                Style::default().bg(theme::SURFACE1).fg(theme::TEXT)
             } else {
-                Style::default()
+                Style::default().fg(theme::TEXT)
             };
 
             let name = node_display_name(app.project_name.as_ref(), node);

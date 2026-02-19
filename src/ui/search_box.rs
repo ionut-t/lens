@@ -3,18 +3,20 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
+use super::theme;
+
 pub fn draw(frame: &mut Frame, query: &str, active: bool, area: Rect) {
     let (display, border_color, text_style) = if active {
         (
             format!("/ {}│", query),
-            Color::Cyan,
-            Style::default().fg(Color::White),
+            theme::BLUE,
+            Style::default().fg(theme::TEXT),
         )
     } else {
         (
             format!("/ {}", query),
-            Color::DarkGray,
-            Style::default().fg(Color::DarkGray),
+            theme::SURFACE2,
+            Style::default().fg(theme::OVERLAY0),
         )
     };
 
