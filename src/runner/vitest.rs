@@ -72,12 +72,10 @@ impl VitestRunner {
     ) -> Result<tempfile::NamedTempFile> {
         let mut project_dirs: Vec<String> = Vec::new();
         for config in configs {
-            if let Some(parent) = config.parent()
-                && let Ok(rel) = parent.strip_prefix(&self.workspace)
-            {
-                let rel_str = rel.to_string_lossy().to_string();
-                if !rel_str.is_empty() && !project_dirs.contains(&rel_str) {
-                    project_dirs.push(rel_str);
+            if let Some(parent) = config.parent() {
+                let abs = parent.to_string_lossy().to_string();
+                if !project_dirs.contains(&abs) {
+                    project_dirs.push(abs);
                 }
             }
         }
@@ -97,7 +95,7 @@ impl VitestRunner {
         let mut file = tempfile::Builder::new()
             .prefix("lens-vitest-workspace-")
             .suffix(".mjs")
-            .tempfile_in(&self.workspace)
+            .tempfile()
             .context("failed to create temp workspace config")?;
 
         use std::io::Write;
