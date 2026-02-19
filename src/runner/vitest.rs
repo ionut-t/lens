@@ -63,6 +63,50 @@ impl VitestRunner {
         Ok(file)
     }
 
+    /// Generate a temporary workspace config that lists all project directories
+    /// in `test.projects`, enabling single-process vitest execution.
+    fn write_workspace_config(
+        &self,
+        configs: &[PathBuf],
+        reporter_path: &str,
+    ) -> Result<tempfile::NamedTempFile> {
+        let mut project_dirs: Vec<String> = Vec::new();
+        for config in configs {
+            if let Some(parent) = config.parent()
+                && let Ok(rel) = parent.strip_prefix(&self.workspace)
+            {
+                let rel_str = rel.to_string_lossy().to_string();
+                if !rel_str.is_empty() && !project_dirs.contains(&rel_str) {
+                    project_dirs.push(rel_str);
+                }
+            }
+        }
+
+        let projects_json = project_dirs
+            .iter()
+            .map(|p| format!("    '{}'", p.replace('\\', "/")))
+            .collect::<Vec<_>>()
+            .join(",\n");
+
+        let content = format!(
+            "export default {{\n  test: {{\n    reporters: ['{}'],\n    projects: [\n{}\n    ]\n  }}\n}}\n",
+            reporter_path.replace('\\', "/"),
+            projects_json,
+        );
+
+        let mut file = tempfile::Builder::new()
+            .prefix("lens-vitest-workspace-")
+            .suffix(".mjs")
+            .tempfile_in(&self.workspace)
+            .context("failed to create temp workspace config")?;
+
+        use std::io::Write;
+        file.write_all(content.as_bytes())
+            .context("failed to write workspace config")?;
+
+        Ok(file)
+    }
+
     /// Find all vite/vitest config files in the workspace (these define test projects).
     fn find_vitest_configs(&self) -> Vec<PathBuf> {
         let mut configs = Vec::new();
@@ -100,22 +144,34 @@ impl VitestRunner {
     /// When `watch` is true, omits the `run` subcommand so vitest stays alive
     /// and re-runs on file changes. Non-zero exit is not treated as an error
     /// in watch mode (the process is killed on toggle-off).
+    ///
+    /// When `workspace_config` is provided, uses `-c <path>` and omits the
+    /// `--reporter` CLI flag (the reporter is embedded in the workspace config).
     async fn spawn_and_stream(
         &self,
         args: &[&str],
         tx: mpsc::UnboundedSender<TestEvent>,
         watch: bool,
+        workspace_config: Option<&Path>,
     ) -> Result<()> {
-        let reporter_file = self.write_reporter()?;
-        let reporter_path = reporter_file.path().to_string_lossy().to_string();
+        let reporter_file = if workspace_config.is_none() {
+            Some(self.write_reporter()?)
+        } else {
+            None
+        };
 
         let mut cmd = Command::new("npx");
         cmd.arg("vitest");
         cmd.arg(if watch { "watch" } else { "run" });
         cmd.args(args)
             .arg("--disableConsoleIntercept")
-            .arg("--includeTaskLocation")
-            .arg(format!("--reporter={}", reporter_path));
+            .arg("--includeTaskLocation");
+
+        if let Some(ws_config) = workspace_config {
+            cmd.arg("-c").arg(ws_config);
+        } else if let Some(ref rf) = reporter_file {
+            cmd.arg(format!("--reporter={}", rf.path().to_string_lossy()));
+        }
 
         let mut child = cmd
             .current_dir(&self.workspace)
@@ -231,15 +287,18 @@ impl TestRunner for VitestRunner {
         let configs = self.find_vitest_configs();
         if configs.is_empty() {
             // No configs found, run vitest from workspace root (non-Nx)
-            self.spawn_and_stream(&[], tx, false).await
+            self.spawn_and_stream(&[], tx, false, None).await
         } else {
-            // Run vitest once per config (each represents a project)
-            for config in &configs {
-                let config_str = config.to_string_lossy().to_string();
-                self.spawn_and_stream(&["--config", &config_str], tx.clone(), false)
-                    .await?;
-            }
-            Ok(())
+            // Generate a workspace config and run all projects in a single process
+            let reporter_file = self.write_reporter()?;
+            let reporter_path = reporter_file.path().to_string_lossy().to_string();
+            let workspace_config = self.write_workspace_config(&configs, &reporter_path)?;
+            let ws_path = workspace_config.path().to_path_buf();
+            let result = self.spawn_and_stream(&[], tx, false, Some(&ws_path)).await;
+            // Keep temp files alive until vitest exits
+            drop(workspace_config);
+            drop(reporter_file);
+            result
         }
     }
 
@@ -247,10 +306,10 @@ impl TestRunner for VitestRunner {
         let file_str = file.to_string_lossy().to_string();
         if let Some(config) = self.find_config_for_file(file) {
             let config_str = config.to_string_lossy().to_string();
-            self.spawn_and_stream(&[&file_str, "--config", &config_str], tx, false)
+            self.spawn_and_stream(&[&file_str, "--config", &config_str], tx, false, None)
                 .await
         } else {
-            self.spawn_and_stream(&[&file_str], tx, false).await
+            self.spawn_and_stream(&[&file_str], tx, false, None).await
         }
     }
 
@@ -267,10 +326,11 @@ impl TestRunner for VitestRunner {
                 &[&file_str, "--config", &config_str, "-t", test_name],
                 tx,
                 false,
+                None,
             )
             .await
         } else {
-            self.spawn_and_stream(&[&file_str, "-t", test_name], tx, false)
+            self.spawn_and_stream(&[&file_str, "-t", test_name], tx, false, None)
                 .await
         }
     }
@@ -278,14 +338,18 @@ impl TestRunner for VitestRunner {
     async fn run_all_watch(&self, tx: mpsc::UnboundedSender<TestEvent>) -> Result<()> {
         let configs = self.find_vitest_configs();
         if configs.is_empty() {
-            self.spawn_and_stream(&[], tx, true).await
+            self.spawn_and_stream(&[], tx, true, None).await
         } else {
-            // Pass all configs. For a single config this is a simple call.
-            // For multiple configs, we pick the first one (watch mode runs
-            // a single long-lived process).
-            let config_str = configs[0].to_string_lossy().to_string();
-            self.spawn_and_stream(&["--config", &config_str], tx, true)
-                .await
+            // Generate a workspace config and watch all projects in a single process
+            let reporter_file = self.write_reporter()?;
+            let reporter_path = reporter_file.path().to_string_lossy().to_string();
+            let workspace_config = self.write_workspace_config(&configs, &reporter_path)?;
+            let ws_path = workspace_config.path().to_path_buf();
+            let result = self.spawn_and_stream(&[], tx, true, Some(&ws_path)).await;
+            // Keep temp files alive until vitest exits
+            drop(workspace_config);
+            drop(reporter_file);
+            result
         }
     }
 
