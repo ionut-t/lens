@@ -9,7 +9,7 @@ use crate::{
     models::{NodeKind, TestNode, TestStatus},
 };
 
-pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
+pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let focused = app.active_panel == Panel::TestTree;
     let border_style = if focused {
         Style::default().fg(theme::BLUE)
@@ -27,9 +27,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(border_style);
 
-    // Calculate viewport height (inner area minus borders)
-    let inner_height = block.inner(area).height as usize;
-    app.tree_viewport_height = inner_height;
+    let inner_height = app.tree_viewport_height;
 
     let visible = app.visible_tree_nodes();
     let end = (app.tree_scroll_offset + inner_height).min(visible.len());

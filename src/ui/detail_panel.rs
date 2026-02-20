@@ -7,7 +7,7 @@ use super::theme;
 use crate::app::{App, Panel};
 use crate::models::{NodeKind, TestStatus};
 
-pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
+pub fn draw(frame: &mut Frame, app: &App, scroll_offset: u16, area: Rect) -> u16 {
     let focused = app.active_panel == Panel::Detail;
     let border_style = if focused {
         Style::default().fg(theme::BLUE)
@@ -157,15 +157,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         Text::from("Select a test to view details.")
     };
 
-    let content_height = content.height() as u16;
-    let viewport_height = content_area.height;
-    let max_scroll = content_height.saturating_sub(viewport_height);
-    app.detail_scroll_offset = app.detail_scroll_offset.min(max_scroll);
+    let max_scroll = content
+        .height()
+        .saturating_sub(content_area.height as usize) as u16;
+    let effective_scroll = scroll_offset.min(max_scroll);
 
     let paragraph = Paragraph::new(content)
         .wrap(ratatui::widgets::Wrap { trim: false })
-        .scroll((app.detail_scroll_offset, 0));
+        .scroll((effective_scroll, 0));
+
     frame.render_widget(paragraph, content_area);
+
+    effective_scroll
 }
 
 /// Walk up the tree to find the ancestor file node and return its console output.
@@ -181,6 +184,7 @@ fn get_file_console_output(tree: &crate::models::TestTree, node_id: usize) -> &[
             break;
         }
     }
+
     &[]
 }
 

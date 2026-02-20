@@ -6,7 +6,7 @@ use ratatui::{
 use super::theme;
 use crate::app::{App, Panel};
 
-pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
+pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let focused = app.active_panel == Panel::FailedList;
     let border_style = if focused {
         Style::default().fg(theme::BLUE)
@@ -19,11 +19,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(border_style);
 
-    let inner_height = block.inner(area).height as usize;
-    app.failed_viewport_height = inner_height;
+    let inner_height = app.failed_viewport_height;
 
     let failed_ids = app.tree.failed_nodes();
     let end = (app.failed_scroll_offset + inner_height).min(failed_ids.len());
+
     let items: Vec<ListItem> = failed_ids[app.failed_scroll_offset..end]
         .iter()
         .enumerate()
