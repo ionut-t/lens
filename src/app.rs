@@ -67,12 +67,16 @@ pub enum Action {
     FocusPrevious,
     NavigateUp,
     NavigateDown,
+    ScrollUp,
+    ScrollDown,
     Expand,
     ExpandAll,
     Collapse,
     CollapseAll,
     JumpToStart,
     JumpToEnd,
+    JumpToPrevFile,
+    JumpToNextFile,
     Select,
     RunAll,
     RerunFailed,
@@ -218,6 +222,49 @@ impl App {
                 }
             },
 
+            Action::ScrollUp => {
+                let half = (self.tree_viewport_height / 2).max(1);
+                match self.active_panel {
+                    Panel::TestTree => {
+                        self.selected_tree_index = self.selected_tree_index.saturating_sub(half);
+                        self.detail_scroll_offset = 0;
+                        self.adjust_tree_scroll();
+                    }
+                    Panel::FailedList => {
+                        self.selected_failed_index =
+                            self.selected_failed_index.saturating_sub(half);
+                        self.detail_scroll_offset = 0;
+                        self.adjust_failed_scroll();
+                    }
+                    Panel::Detail => {
+                        self.detail_scroll_offset =
+                            self.detail_scroll_offset.saturating_sub(half as u16);
+                    }
+                }
+            }
+
+            Action::ScrollDown => {
+                let half = (self.tree_viewport_height / 2).max(1);
+                match self.active_panel {
+                    Panel::TestTree => {
+                        let max = self.visible_tree_nodes().len().saturating_sub(1);
+                        self.selected_tree_index = (self.selected_tree_index + half).min(max);
+                        self.detail_scroll_offset = 0;
+                        self.adjust_tree_scroll();
+                    }
+                    Panel::FailedList => {
+                        let max = self.tree.failed_nodes().len().saturating_sub(1);
+                        self.selected_failed_index = (self.selected_failed_index + half).min(max);
+                        self.detail_scroll_offset = 0;
+                        self.adjust_failed_scroll();
+                    }
+                    Panel::Detail => {
+                        self.detail_scroll_offset =
+                            self.detail_scroll_offset.saturating_add(half as u16);
+                    }
+                }
+            }
+
             Action::Expand => {
                 if self.active_panel == Panel::TestTree
                     && let Some(&(node_id, _)) =
@@ -276,6 +323,40 @@ impl App {
                     self.detail_scroll_offset = u16::MAX;
                 }
             },
+
+            Action::JumpToPrevFile => {
+                if self.active_panel == Panel::TestTree {
+                    let nodes = self.visible_tree_nodes();
+                    for i in (0..self.selected_tree_index).rev() {
+                        if let Some(&(node_id, _)) = nodes.get(i)
+                            && let Some(node) = self.tree.get(node_id)
+                            && node.kind == NodeKind::File
+                        {
+                            self.selected_tree_index = i;
+                            self.detail_scroll_offset = 0;
+                            self.adjust_tree_scroll();
+                            break;
+                        }
+                    }
+                }
+            }
+
+            Action::JumpToNextFile => {
+                if self.active_panel == Panel::TestTree {
+                    let nodes = self.visible_tree_nodes();
+                    for i in (self.selected_tree_index + 1)..nodes.len() {
+                        if let Some(&(node_id, _)) = nodes.get(i)
+                            && let Some(node) = self.tree.get(node_id)
+                            && node.kind == NodeKind::File
+                        {
+                            self.selected_tree_index = i;
+                            self.detail_scroll_offset = 0;
+                            self.adjust_tree_scroll();
+                            break;
+                        }
+                    }
+                }
+            }
 
             Action::Select => {
                 if self.active_panel == Panel::TestTree

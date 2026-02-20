@@ -274,8 +274,13 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
 }
 
 fn map_key(key: KeyEvent) -> Option<Action> {
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-        return Some(Action::Quit);
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        return match key.code {
+            KeyCode::Char('c') => Some(Action::Quit),
+            KeyCode::Char('u') => Some(Action::ScrollUp),
+            KeyCode::Char('d') => Some(Action::ScrollDown),
+            _ => None,
+        };
     }
 
     match key.code {
@@ -290,12 +295,16 @@ fn map_key(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('H') => Some(Action::CollapseAll),
         KeyCode::Char('g') | KeyCode::Home => Some(Action::JumpToStart),
         KeyCode::Char('G') | KeyCode::End => Some(Action::JumpToEnd),
+        KeyCode::Char('{') => Some(Action::JumpToPrevFile),
+        KeyCode::Char('}') => Some(Action::JumpToNextFile),
         KeyCode::Enter => Some(Action::Select),
         KeyCode::Char('a') => Some(Action::RunAll),
         KeyCode::Char('r') => Some(Action::RerunFailed),
         KeyCode::Char('w') => Some(Action::ToggleWatch),
         KeyCode::Char('f') | KeyCode::Char('/') => Some(Action::FilterEnter),
         KeyCode::Char('e') => Some(Action::OpenInEditor),
+        KeyCode::PageUp => Some(Action::ScrollUp),
+        KeyCode::PageDown => Some(Action::ScrollDown),
         _ => None,
     }
 }
