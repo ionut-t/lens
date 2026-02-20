@@ -1,6 +1,7 @@
 pub mod vitest;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -41,4 +42,9 @@ pub trait TestRunner: Send + Sync {
     /// Display name for this runner (e.g., "Vitest").
     #[allow(dead_code)]
     fn name(&self) -> &str;
+}
+
+/// Detect and construct the appropriate runner for the given workspace.
+pub fn detect(workspace: PathBuf, project_root: Option<PathBuf>) -> Arc<dyn TestRunner> {
+    Arc::new(vitest::VitestRunner::new(workspace, project_root))
 }

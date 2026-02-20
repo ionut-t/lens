@@ -18,7 +18,6 @@ use tokio::time::{Duration, interval};
 
 use app::{Action, App, handle_test_event};
 use runner::TestRunner;
-use runner::vitest::VitestRunner;
 
 use crate::app::handle_action;
 
@@ -91,7 +90,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
 
             let discover_root = project_root.as_deref().unwrap_or(&ws).to_path_buf();
 
-            let r: Arc<dyn TestRunner> = Arc::new(VitestRunner::new(ws.clone(), project_root));
+            let r: Arc<dyn TestRunner> = runner::detect(ws.clone(), project_root);
             let _ = runner_tx.send(Arc::clone(&r));
 
             if let Ok(files) = r.discover(&discover_root).await {
