@@ -8,7 +8,7 @@ const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let watch_indicator = if app.watch_mode { " [watch] " } else { "" };
 
-    let bar = if app.discovering {
+    let left = if app.discovering {
         let spinner = SPINNER_FRAMES[app.spinner_tick % SPINNER_FRAMES.len()];
         Line::from(vec![Span::styled(
             format!(" {} Discovering tests...", spinner),
@@ -22,7 +22,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             Span::raw(" apply"),
         ])
     } else {
-        let mut spans = vec![
+        let spans = vec![
             Span::styled(" [f]", Style::default().fg(theme::YELLOW)),
             Span::raw(" filter  "),
             Span::styled("[r]", Style::default().fg(theme::YELLOW)),
@@ -38,13 +38,17 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(watch_indicator, Style::default().fg(theme::TEAL)),
         ];
 
-        if app.running {
-            let spinner = SPINNER_FRAMES[app.spinner_tick % SPINNER_FRAMES.len()];
-            spans.push(Span::styled(
-                format!(" {} running...", spinner),
-                Style::default().fg(theme::YELLOW),
-            ));
-        } else if let Some(summary) = &app.summary {
+        Line::from(spans)
+    };
+
+    let right = if app.running {
+        let spinner = SPINNER_FRAMES[app.spinner_tick % SPINNER_FRAMES.len()];
+        Line::from(vec![Span::styled(
+            format!("{} running... ", spinner),
+            Style::default().fg(theme::YELLOW),
+        )])
+    } else if !app.discovering {
+        if let Some(summary) = &app.summary {
             let RunSummary {
                 passed,
                 failed,
@@ -52,38 +56,39 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
                 ..
             } = summary;
 
-            spans.push(Span::styled(
-                format!("  {:.1}s", summary.duration as f64 / 1000.0),
-                Style::default().fg(theme::OVERLAY0),
-            ));
-
             if passed + failed + skipped > 0 {
-                spans.push(Span::styled(" ✔ ", Style::default().fg(theme::GREEN)));
-                spans.push(Span::styled(
-                    format!("{}", passed),
-                    Style::default().fg(theme::GREEN),
-                ));
-                spans.push(Span::styled("  ✘ ", Style::default().fg(theme::RED)));
-                spans.push(Span::styled(
-                    format!("{}", failed),
-                    Style::default().fg(theme::RED),
-                ));
-                spans.push(Span::styled("  ⊘ ", Style::default().fg(theme::TEAL)));
-                spans.push(Span::styled(
-                    format!("{}", skipped),
-                    Style::default().fg(theme::TEAL),
-                ));
-
-                spans.push(Span::styled(
-                    format!("  {:.1}s", summary.duration as f64 / 1000.0),
-                    Style::default().fg(theme::MAUVE),
-                ));
+                Line::from(vec![
+                    Span::styled("✔ ", Style::default().fg(theme::GREEN)),
+                    Span::styled(format!("{}", passed), Style::default().fg(theme::GREEN)),
+                    Span::styled("  ✘ ", Style::default().fg(theme::RED)),
+                    Span::styled(format!("{}", failed), Style::default().fg(theme::RED)),
+                    Span::styled("  ⊘ ", Style::default().fg(theme::TEAL)),
+                    Span::styled(format!("{}", skipped), Style::default().fg(theme::TEAL)),
+                    Span::styled("  ⏲ ", Style::default().fg(theme::MAUVE)),
+                    Span::styled(
+                        format!("{:.1}s ", summary.duration as f64 / 1000.0),
+                        Style::default().fg(theme::MAUVE),
+                    ),
+                ])
+            } else {
+                Line::from("")
             }
+        } else {
+            Line::from("")
         }
-
-        Line::from(spans)
+    } else {
+        Line::from("")
     };
 
-    let paragraph = Paragraph::new(bar).style(Style::default().bg(theme::SURFACE0));
-    frame.render_widget(paragraph, area);
+    let [left_area, right_area] =
+        Layout::horizontal([Constraint::Min(1), Constraint::Length(right.width() as u16)])
+            .areas(area);
+
+    let left_para = Paragraph::new(left).style(Style::default().bg(theme::SURFACE0));
+    let right_para = Paragraph::new(right)
+        .style(Style::default().bg(theme::SURFACE0))
+        .alignment(Alignment::Right);
+
+    frame.render_widget(left_para, left_area);
+    frame.render_widget(right_para, right_area);
 }
