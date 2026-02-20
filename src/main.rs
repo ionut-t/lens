@@ -16,9 +16,11 @@ use crossterm::{
 use ratatui::prelude::*;
 use tokio::time::{Duration, interval};
 
-use app::{Action, App};
+use app::{Action, App, handle_test_event};
 use runner::TestRunner;
 use runner::vitest::VitestRunner;
+
+use crate::app::handle_action;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -132,7 +134,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                         if let Some(ref runner) = test_runner {
                             match action {
                                 Action::RunAll => {
-                                    app.handle_action(action);
+                                    handle_action(&mut app,action);
                                     app.run_start = Some(std::time::Instant::now());
                                     let tx = app.event_tx.clone();
                                     let runner = Arc::clone(runner);
@@ -146,7 +148,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                     });
                                 }
                                 Action::ToggleWatch => {
-                                    app.handle_action(Action::ToggleWatch);
+                                    handle_action(&mut app,Action::ToggleWatch);
                                     if app.watch_mode {
                                         // Start watch mode
                                         let tx = app.event_tx.clone();
@@ -170,7 +172,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                     }
                                 }
                                 other => {
-                                    app.handle_action(other);
+                                    handle_action(&mut app,other);
                                     for pending in app.pending_runs.drain(..) {
                                         app.running = true;
                                         app.run_start = Some(std::time::Instant::now());
@@ -205,7 +207,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                 Action::RunAll | Action::RerunFailed | Action::ToggleWatch | Action::Select => {
                                     app.output_lines.push("[INFO] Runner is still loading...".into());
                                 }
-                                other => app.handle_action(other),
+                                other => handle_action(&mut app,other),
                             }
                         }
                     }
@@ -219,7 +221,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                         test_runner = Some(r);
                     }
                     Err(_) => {
-                        app.handle_test_event(app::TestEvent::Error {
+                        handle_test_event(&mut app, app::TestEvent::Error {
                             message: "Failed to initialize test runner".into(),
                         });
                         app.discovering = false;
@@ -228,7 +230,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
             }
 
             Some(test_event) = event_rx.recv() => {
-                app.handle_test_event(test_event);
+                handle_test_event(&mut app,test_event);
             }
 
             _ = tick.tick() => {
