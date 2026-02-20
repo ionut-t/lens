@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
 use crate::{
     app::{App, Panel, PendingRun},
     models::{NodeKind, TestStatus},
@@ -354,6 +356,58 @@ pub fn handle_action(app: &mut App, action: Action) {
                 }
             }
         }
+    }
+}
+
+pub fn trigger_action(key: KeyEvent, filter_active: bool) -> Option<Action> {
+    if filter_active {
+        match key.code {
+            KeyCode::Esc => Some(Action::FilterExit),
+            KeyCode::Enter => Some(Action::FilterApply),
+            KeyCode::Backspace => Some(Action::FilterBackspace),
+            KeyCode::Up => Some(Action::NavigateUp),
+            KeyCode::Down => Some(Action::NavigateDown),
+            KeyCode::Char(c) => Some(Action::FilterInput(c)),
+            _ => None,
+        }
+    } else {
+        map_key(key)
+    }
+}
+
+fn map_key(key: KeyEvent) -> Option<Action> {
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        return match key.code {
+            KeyCode::Char('c') => Some(Action::Quit),
+            KeyCode::Char('u') => Some(Action::ScrollUp),
+            KeyCode::Char('d') => Some(Action::ScrollDown),
+            _ => None,
+        };
+    }
+
+    match key.code {
+        KeyCode::Char('q') => Some(Action::Quit),
+        KeyCode::Tab => Some(Action::FocusNext),
+        KeyCode::BackTab => Some(Action::FocusPrevious),
+        KeyCode::Up | KeyCode::Char('k') => Some(Action::NavigateUp),
+        KeyCode::Down | KeyCode::Char('j') => Some(Action::NavigateDown),
+        KeyCode::Right | KeyCode::Char('l') => Some(Action::Expand),
+        KeyCode::Char('L') => Some(Action::ExpandAll),
+        KeyCode::Left | KeyCode::Char('h') => Some(Action::Collapse),
+        KeyCode::Char('H') => Some(Action::CollapseAll),
+        KeyCode::Char('g') | KeyCode::Home => Some(Action::JumpToStart),
+        KeyCode::Char('G') | KeyCode::End => Some(Action::JumpToEnd),
+        KeyCode::Char('{') => Some(Action::JumpToPrevFile),
+        KeyCode::Char('}') => Some(Action::JumpToNextFile),
+        KeyCode::Enter => Some(Action::Select),
+        KeyCode::Char('a') => Some(Action::RunAll),
+        KeyCode::Char('r') => Some(Action::RerunFailed),
+        KeyCode::Char('w') => Some(Action::ToggleWatch),
+        KeyCode::Char('f') | KeyCode::Char('/') => Some(Action::FilterEnter),
+        KeyCode::Char('e') => Some(Action::OpenInEditor),
+        KeyCode::PageUp => Some(Action::ScrollUp),
+        KeyCode::PageDown => Some(Action::ScrollDown),
+        _ => None,
     }
 }
 

@@ -7,7 +7,7 @@ use crate::models::{RunSummary, TestTree};
 pub mod actions;
 pub mod events;
 
-pub use actions::{Action, handle_action};
+pub use actions::{Action, handle_action, trigger_action};
 pub use events::{TestEvent, handle_test_event};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
