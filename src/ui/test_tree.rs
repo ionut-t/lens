@@ -62,21 +62,20 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             };
 
             let selected = absolute_i == app.selected_tree_index && focused;
-            let name_style = if selected {
-                Style::default().bg(theme::SURFACE1).fg(theme::TEXT)
-            } else {
-                Style::default().fg(theme::TEXT)
-            };
-
             let name = node_display_name(app.project_name.as_ref(), node);
 
             let content = Line::from(vec![
                 Span::raw(indent),
                 Span::styled(icon, Style::default().fg(node.status.color())),
-                Span::styled(name, name_style),
+                Span::styled(name, Style::default().fg(theme::TEXT)),
             ]);
 
-            ListItem::new(content)
+            let item = ListItem::new(content);
+            if selected {
+                item.style(Style::default().bg(theme::SURFACE1))
+            } else {
+                item
+            }
         })
         .collect();
 

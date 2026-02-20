@@ -30,16 +30,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .map(|(view_i, &node_id)| {
             let absolute_i = view_i + app.failed_scroll_offset;
             let node = app.tree.get(node_id).unwrap();
-            let style = if absolute_i == app.selected_failed_index && focused {
-                Style::default().bg(theme::SURFACE1).fg(theme::TEXT)
-            } else {
-                Style::default().fg(theme::RED)
-            };
 
-            ListItem::new(Line::from(vec![
+            let selected = absolute_i == app.selected_failed_index && focused;
+
+            let item = ListItem::new(Line::from(vec![
                 Span::styled("✘ ", Style::default().fg(theme::RED)),
-                Span::styled(&node.name, style),
-            ]))
+                Span::styled(&node.name, Style::default().fg(theme::RED)),
+            ]));
+
+            if selected {
+                item.style(Style::default().bg(theme::SURFACE1))
+            } else {
+                item
+            }
         })
         .collect();
 
