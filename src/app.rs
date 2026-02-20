@@ -7,8 +7,9 @@ use crate::models::{NodeKind, RunSummary, TestStatus, TestTree};
 /// Events streamed from test runner adapters into the app.
 #[derive(Debug)]
 pub enum TestEvent {
-    RunStarted {
-        total: usize,
+    RunStarted,
+    TestsCollected {
+        count: usize,
     },
     FileStarted {
         path: String,
@@ -361,14 +362,18 @@ impl App {
     /// Process a test event from a runner.
     pub fn handle_test_event(&mut self, event: TestEvent) {
         match event {
-            TestEvent::RunStarted { total } => {
+            TestEvent::RunStarted => {
                 if self.full_run {
                     self.tree.reset();
                     self.output_lines.clear();
                 }
-                self.progress_total = total;
+                self.progress_total = 0;
                 self.progress_done = 0;
                 self.running = true;
+            }
+
+            TestEvent::TestsCollected { count } => {
+                self.progress_total += count;
             }
 
             TestEvent::FileStarted { path } => {

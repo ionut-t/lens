@@ -35,6 +35,14 @@ export default class LensReporter {
     this._emit({ type: "run-started", total: specifications.length });
   }
 
+  onTestModuleCollected(module) {
+    let count = 0;
+    for (const _test of module.children.allTests()) {
+      count += 1;
+    }
+    this._emit({ type: "tests-collected", file: module.moduleId, count });
+  }
+
   onTestModuleStart(module) {
     this._currentFile = module.moduleId;
     this._emit({ type: "file-started", file: module.moduleId });

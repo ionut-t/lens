@@ -427,11 +427,16 @@ impl TestRunner for VitestRunner {
 
 // --- NDJSON deserialization types ---
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 enum VitestEvent {
     RunStarted {
         total: usize,
+    },
+    TestsCollected {
+        file: String,
+        count: usize,
     },
     FileStarted {
         file: String,
@@ -487,7 +492,8 @@ struct VitestError {
 impl VitestEvent {
     fn into_test_event(self) -> Option<TestEvent> {
         match self {
-            VitestEvent::RunStarted { total } => Some(TestEvent::RunStarted { total }),
+            VitestEvent::RunStarted { .. } => Some(TestEvent::RunStarted),
+            VitestEvent::TestsCollected { count, .. } => Some(TestEvent::TestsCollected { count }),
             VitestEvent::FileStarted { file } => Some(TestEvent::FileStarted { path: file }),
             VitestEvent::TestStarted { file, name } => Some(TestEvent::TestStarted { file, name }),
             VitestEvent::TestFinished {
