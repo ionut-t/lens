@@ -68,7 +68,11 @@ pub enum Action {
     NavigateUp,
     NavigateDown,
     Expand,
+    ExpandAll,
     Collapse,
+    CollapseAll,
+    JumpToStart,
+    JumpToEnd,
     Select,
     RunAll,
     RerunFailed,
@@ -224,6 +228,54 @@ impl App {
                     self.tree.toggle_expanded(node_id);
                 }
             }
+
+            Action::ExpandAll => {
+                if self.active_panel == Panel::TestTree {
+                    self.tree.expand_all();
+                }
+            }
+
+            Action::CollapseAll => {
+                if self.active_panel == Panel::TestTree {
+                    self.tree.collapse_all();
+                    self.selected_tree_index = 0;
+                    self.tree_scroll_offset = 0;
+                }
+            }
+
+            Action::JumpToStart => match self.active_panel {
+                Panel::TestTree => {
+                    self.selected_tree_index = 0;
+                    self.tree_scroll_offset = 0;
+                    self.detail_scroll_offset = 0;
+                }
+                Panel::FailedList => {
+                    self.selected_failed_index = 0;
+                    self.failed_scroll_offset = 0;
+                    self.detail_scroll_offset = 0;
+                }
+                Panel::Detail => {
+                    self.detail_scroll_offset = 0;
+                }
+            },
+
+            Action::JumpToEnd => match self.active_panel {
+                Panel::TestTree => {
+                    let max = self.visible_tree_nodes().len().saturating_sub(1);
+                    self.selected_tree_index = max;
+                    self.detail_scroll_offset = 0;
+                    self.adjust_tree_scroll();
+                }
+                Panel::FailedList => {
+                    let max = self.tree.failed_nodes().len().saturating_sub(1);
+                    self.selected_failed_index = max;
+                    self.detail_scroll_offset = 0;
+                    self.adjust_failed_scroll();
+                }
+                Panel::Detail => {
+                    self.detail_scroll_offset = u16::MAX;
+                }
+            },
 
             Action::Select => {
                 if self.active_panel == Panel::TestTree

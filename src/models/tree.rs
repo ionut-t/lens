@@ -155,6 +155,20 @@ impl TestTree {
         }
     }
 
+    pub fn expand_all(&mut self) {
+        for node in &mut self.nodes {
+            if !node.children.is_empty() {
+                node.expanded = true;
+            }
+        }
+    }
+
+    pub fn collapse_all(&mut self) {
+        for node in &mut self.nodes {
+            node.expanded = false;
+        }
+    }
+
     /// Update a test node's result and propagate status up to ancestors.
     pub fn update_result(&mut self, id: usize, result: TestResult) {
         let status = result.status;
