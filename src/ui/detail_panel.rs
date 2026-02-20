@@ -274,14 +274,20 @@ fn build_failure_text<'a>(
         }
     }
 
-    // Stack trace
+    // Stack trace (filter out noise)
     if let Some(ref stack) = failure.stack_trace {
-        lines.push(Line::from(""));
-        for stack_line in stack.lines() {
-            lines.push(Line::from(Span::styled(
-                stack_line,
-                Style::default().fg(theme::OVERLAY0),
-            )));
+        let filtered: Vec<&str> = stack
+            .lines()
+            .filter(|line| !line.contains("node_modules"))
+            .collect();
+        if !filtered.is_empty() {
+            lines.push(Line::from(""));
+            for stack_line in filtered {
+                lines.push(Line::from(Span::styled(
+                    stack_line,
+                    Style::default().fg(theme::OVERLAY0),
+                )));
+            }
         }
     }
 
