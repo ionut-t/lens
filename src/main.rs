@@ -64,27 +64,35 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
     let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let project = std::env::args().nth(1);
 
-    // If a project name is passed, scope to that project's directory
-    let project_root = if let Some(project_name) = &project {
-        Some(resolve_nx_project(&workspace, project_name)?)
-    } else {
-        None
-    };
-
-    let discover_root = project_root.as_deref().unwrap_or(&workspace).to_path_buf();
     let (mut app, mut event_rx) = App::new(workspace.clone());
-    app.project_name = project;
+    app.project_name = project.clone();
     let mut tick = interval(Duration::from_millis(100));
-    let runner: Arc<dyn TestRunner> = Arc::new(VitestRunner::new(workspace.clone(), project_root));
+    let mut test_runner: Option<Arc<dyn TestRunner>> = None;
 
-    // Discover test files asynchronously so the UI renders immediately
+    // Resolve Nx project and discover files asynchronously
+    let (runner_tx, runner_rx) = tokio::sync::oneshot::channel::<Arc<dyn TestRunner>>();
+    let mut runner_rx = Some(runner_rx);
     {
         let tx = app.event_tx.clone();
-        let r = Arc::clone(&runner);
         let ws = workspace.clone();
-        let dr = discover_root.to_path_buf();
         tokio::spawn(async move {
-            if let Ok(files) = r.discover(&dr).await {
+            // Resolve Nx project root if a project name was given
+            let project_root = if let Some(name) = project {
+                let ws_clone = ws.clone();
+                tokio::task::spawn_blocking(move || resolve_nx_project(&ws_clone, &name).ok())
+                    .await
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            };
+
+            let discover_root = project_root.as_deref().unwrap_or(&ws).to_path_buf();
+
+            let r: Arc<dyn TestRunner> = Arc::new(VitestRunner::new(ws.clone(), project_root));
+            let _ = runner_tx.send(Arc::clone(&r));
+
+            if let Ok(files) = r.discover(&discover_root).await {
                 let displays: Vec<String> = files
                     .iter()
                     .map(|f| {
@@ -121,14 +129,16 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                         map_key(key)
                     };
                     if let Some(action) = action {
+                        if let Some(ref runner) = test_runner {
                             match action {
                                 Action::RunAll => {
                                     app.handle_action(action);
                                     app.run_start = Some(std::time::Instant::now());
                                     let tx = app.event_tx.clone();
-                                    let r = Arc::clone(&runner);
+                                    let runner = Arc::clone(runner);
+
                                     tokio::spawn(async move {
-                                        if let Err(e) = r.run_all(tx.clone()).await {
+                                        if let Err(e) = runner.run_all(tx.clone()).await {
                                             let _ = tx.send(app::TestEvent::Error {
                                                 message: format!("Runner error: {}", e),
                                             });
@@ -140,9 +150,9 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                     if app.watch_mode {
                                         // Start watch mode
                                         let tx = app.event_tx.clone();
-                                        let r = Arc::clone(&runner);
+                                        let runner = Arc::clone(runner);
                                         let handle = tokio::spawn(async move {
-                                            if let Err(e) = r.run_all_watch(tx.clone()).await {
+                                            if let Err(e) = runner.run_all_watch(tx.clone()).await {
                                                 let _ = tx.send(app::TestEvent::Error {
                                                     message: format!("Watch error: {}", e),
                                                 });
@@ -165,11 +175,11 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                         app.running = true;
                                         app.run_start = Some(std::time::Instant::now());
                                         let tx = app.event_tx.clone();
-                                        let r = Arc::clone(&runner);
+                                        let runner = Arc::clone(runner);
                                         match pending {
                                             app::PendingRun::File(path) => {
                                                 tokio::spawn(async move {
-                                                    if let Err(e) = r.run_file(&path, tx.clone()).await {
+                                                    if let Err(e) = runner.run_file(&path, tx.clone()).await {
                                                         let _ = tx.send(app::TestEvent::Error {
                                                             message: format!("Runner error: {}", e),
                                                         });
@@ -178,7 +188,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                             }
                                             app::PendingRun::Test { file, name } => {
                                                 tokio::spawn(async move {
-                                                    if let Err(e) = r.run_test(&file, &name, tx.clone()).await {
+                                                    if let Err(e) = runner.run_test(&file, &name, tx.clone()).await {
                                                         let _ = tx.send(app::TestEvent::Error {
                                                             message: format!("Runner error: {}", e),
                                                         });
@@ -189,9 +199,33 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                     }
                                 }
                             }
+                        } else {
+                            // Runner not ready yet — handle navigation/UI actions, but skip run actions
+                            match action {
+                                Action::RunAll | Action::RerunFailed | Action::ToggleWatch | Action::Select => {
+                                    app.output_lines.push("[INFO] Runner is still loading...".into());
+                                }
+                                other => app.handle_action(other),
+                            }
+                        }
                     }
                 }
             } => {}
+
+            result = async { runner_rx.as_mut().unwrap().await }, if runner_rx.is_some() => {
+                runner_rx = None;
+                match result {
+                    Ok(r) => {
+                        test_runner = Some(r);
+                    }
+                    Err(_) => {
+                        app.handle_test_event(app::TestEvent::Error {
+                            message: "Failed to initialize test runner".into(),
+                        });
+                        app.discovering = false;
+                    }
+                }
+            }
 
             Some(test_event) = event_rx.recv() => {
                 app.handle_test_event(test_event);

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use tokio::sync::mpsc;
 
-use crate::models::{NodeKind, RunSummary, TestStatus, TestTree};
+use crate::models::{NodeKind, RunSummary, TestResult, TestStatus, TestTree};
 
 /// Events streamed from test runner adapters into the app.
 #[derive(Debug)]
@@ -21,7 +21,7 @@ pub enum TestEvent {
     TestFinished {
         file: String,
         name: String,
-        result: crate::models::TestResult,
+        result: TestResult,
         location: Option<(u32, u32)>,
     },
     FileFinished {
