@@ -61,14 +61,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 },
             };
 
-            let status_color = match node.status {
-                TestStatus::Passed => theme::GREEN,
-                TestStatus::Failed => theme::RED,
-                TestStatus::Running => theme::YELLOW,
-                TestStatus::Skipped => theme::OVERLAY0,
-                TestStatus::Pending => theme::SUBTEXT0,
-            };
-
             let selected = absolute_i == app.selected_tree_index && focused;
             let name_style = if selected {
                 Style::default().bg(theme::SURFACE1).fg(theme::TEXT)
@@ -80,7 +72,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
             let content = Line::from(vec![
                 Span::raw(indent),
-                Span::styled(icon, Style::default().fg(status_color)),
+                Span::styled(icon, Style::default().fg(node.status.color())),
                 Span::styled(name, name_style),
             ]);
 

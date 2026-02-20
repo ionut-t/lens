@@ -72,11 +72,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     lines.push(Line::from("No result yet."));
                 }
             } else {
-                lines.push(Line::from(format!(
-                    "{} — {}",
-                    node.name,
-                    node.status.icon()
-                )));
+                lines.push(Line::from(vec![
+                    Span::styled(&node.name, Style::default().fg(node.status.color())),
+                    Span::raw(" "),
+                    Span::styled(node.status.icon(), Style::default().fg(node.status.color())),
+                ]));
             }
 
             // Console output from the file this test belongs to

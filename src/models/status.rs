@@ -1,4 +1,7 @@
+use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
+
+use crate::ui::theme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum TestStatus {
@@ -18,6 +21,16 @@ impl TestStatus {
             TestStatus::Passed => "✔",
             TestStatus::Failed => "✘",
             TestStatus::Skipped => "⊘",
+        }
+    }
+
+    pub fn color(&self) -> Color {
+        match self {
+            TestStatus::Passed => theme::GREEN,
+            TestStatus::Failed => theme::RED,
+            TestStatus::Running => theme::YELLOW,
+            TestStatus::Skipped => theme::OVERLAY0,
+            TestStatus::Pending => theme::SUBTEXT0,
         }
     }
 
