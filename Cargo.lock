@@ -575,6 +575,7 @@ dependencies = [
  "async-trait",
  "crossterm",
  "glob",
+ "libc",
  "ratatui",
  "serde",
  "serde_json",

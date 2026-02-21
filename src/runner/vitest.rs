@@ -12,23 +12,35 @@ use crate::models::{FailureDetail, RunSummary, TestResult, TestStatus};
 
 use super::{DiscoveredFile, TestRunner};
 
-/// Guard that kills the child process on drop (when a tokio task is aborted).
-struct ChildGuard(Option<tokio::process::Child>);
+/// Guard that kills the child process (and its entire process group) on drop.
+struct ChildGuard {
+    child: Option<tokio::process::Child>,
+    /// Process group ID saved at spawn time so we can kill the whole group.
+    #[cfg(unix)]
+    pgid: Option<u32>,
+}
 
 impl ChildGuard {
     fn new(child: tokio::process::Child) -> Self {
-        Self(Some(child))
-    }
-
-    /// Take ownership of the child (disabling the kill-on-drop guard).
-    fn take(&mut self) -> Option<tokio::process::Child> {
-        self.0.take()
+        #[cfg(unix)]
+        let pgid = child.id();
+        Self {
+            child: Some(child),
+            #[cfg(unix)]
+            pgid,
+        }
     }
 }
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
-        if let Some(ref mut child) = self.0 {
+        // Kill the entire process group so vitest worker processes don't become orphans.
+        #[cfg(unix)]
+        if let Some(pgid) = self.pgid {
+            unsafe { libc::kill(-(pgid as libc::pid_t), libc::SIGKILL) };
+        }
+        // Fallback / non-Unix: kill just the direct child.
+        if let Some(ref mut child) = self.child {
             let _ = child.start_kill();
         }
     }
@@ -51,6 +63,29 @@ fn open_log_file() -> Option<LogFile> {
     })
 }
 
+/// Commands sent to the vitest watch process via stdin using the LENS_RUN protocol.
+enum WatchRunCommand<'a> {
+    All,
+    File { file: &'a str },
+    Test { file: &'a str, name: &'a str },
+}
+
+impl WatchRunCommand<'_> {
+    fn to_stdin_line(&self) -> String {
+        let json = match self {
+            WatchRunCommand::All => r#"{"type":"run-all"}"#.to_string(),
+            WatchRunCommand::File { file } => format!(r#"{{"type":"run-file","file":"{}"}}"#, file),
+            WatchRunCommand::Test { file, name } => {
+                format!(
+                    r#"{{"type":"run-test","file":"{}","name":"{}"}}"#,
+                    file, name
+                )
+            }
+        };
+        format!("LENS_RUN:{}\n", json)
+    }
+}
+
 fn write_log(lf: &LogFile, msg: &str) {
     use std::io::Write;
     if let Ok(mut f) = lf.lock() {
@@ -67,6 +102,8 @@ pub struct VitestRunner {
     /// Defaults to workspace, but can be narrowed to a single project.
     search_root: PathBuf,
     log_file: Option<LogFile>,
+    /// Channel to send commands to the stdin of the active watch process.
+    watch_stdin: std::sync::Arc<std::sync::Mutex<Option<mpsc::UnboundedSender<String>>>>,
 }
 
 impl VitestRunner {
@@ -76,6 +113,7 @@ impl VitestRunner {
             workspace,
             search_root,
             log_file: open_log_file(),
+            watch_stdin: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -214,20 +252,51 @@ impl VitestRunner {
         self.log(&format!("[cmd] {:?}", cmd.as_std()));
         self.log(&format!("[cwd] {:?}", effective_cwd));
 
+        // Put the child in its own process group so killing it (via ChildGuard) also
+        // takes out any worker processes vitest forks (prevents orphans).
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.as_std_mut().process_group(0);
+        }
+
         let mut child = cmd
             .current_dir(effective_cwd)
-            .stdin(std::process::Stdio::null())
+            .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
             .context("failed to spawn vitest")?;
 
+        let mut stdin = child.stdin.take().context("missing stdin")?;
         let stdout = child.stdout.take().context("missing stdout")?;
         let stderr = child.stderr.take().context("missing stderr")?;
 
-        // Wrap child in a guard that kills the process on drop.
-        // In watch mode this ensures the process is killed when the tokio task is aborted.
-        // In normal mode we take the child back out to wait for its exit status.
+        // Enable control over the watch process via the custom reporter.
+        if watch {
+            let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+            *self.watch_stdin.lock().unwrap() = Some(tx);
+
+            let log_file = self.log_file.clone();
+            let watch_stdin_clear = std::sync::Arc::clone(&self.watch_stdin);
+            tokio::spawn(async move {
+                use tokio::io::AsyncWriteExt;
+                while let Some(line) = rx.recv().await {
+                    if let Some(ref lf) = log_file {
+                        write_log(lf, &format!("[stdin] sending: {}", line.trim()));
+                    }
+                    if stdin.write_all(line.as_bytes()).await.is_err() {
+                        break;
+                    }
+                    let _ = stdin.flush().await;
+                }
+                *watch_stdin_clear.lock().unwrap() = None;
+            });
+        }
+
+        // Wrap child in a guard that kills the process group on drop.
+        // The child stays in the guard at all times so it is always killed if this
+        // future is dropped (e.g. task aborted, app closed mid-run).
         let mut child_guard = ChildGuard::new(child);
 
         // Read stderr in background for error reporting
@@ -274,7 +343,11 @@ impl VitestRunner {
         // Keep the temp file alive until vitest exits
         drop(reporter_file);
 
-        if !watch && let Some(mut child) = child_guard.take() {
+        if watch {
+            self.stop_watch();
+        }
+
+        if !watch && let Some(ref mut child) = child_guard.child {
             let status = child.wait().await.context("failed to wait for vitest")?;
             if !status.success() {
                 let _ = tx.send(TestEvent::Error {
@@ -284,6 +357,20 @@ impl VitestRunner {
         }
 
         Ok(())
+    }
+
+    /// Try to route `cmd` through the active watch process stdin.
+    /// Returns true if the command was sent, false if no watch process is running.
+    fn try_run_via_watch(&self, cmd: WatchRunCommand<'_>) -> bool {
+        let mut guard = self.watch_stdin.lock().unwrap();
+        if let Some(tx) = guard.as_ref() {
+            if tx.send(cmd.to_stdin_line()).is_ok() {
+                return true;
+            }
+            // Sender broken — clear the stale entry
+            *guard = None;
+        }
+        false
     }
 
     fn find_config_for_file(&self, file: &Path) -> Option<PathBuf> {
@@ -331,6 +418,10 @@ impl TestRunner for VitestRunner {
     }
 
     async fn run_all(&self, tx: mpsc::UnboundedSender<TestEvent>) -> Result<()> {
+        if self.try_run_via_watch(WatchRunCommand::All) {
+            return Ok(());
+        }
+
         let configs = self.find_vitest_configs();
         if configs.is_empty() {
             // No configs found, run vitest from workspace root (non-Nx)
@@ -352,20 +443,24 @@ impl TestRunner for VitestRunner {
     }
 
     async fn run_file(&self, file: &Path, tx: mpsc::UnboundedSender<TestEvent>) -> Result<()> {
-        let file_str = file.to_string_lossy().to_string();
+        let file_abs = file.to_string_lossy().to_string();
+        if self.try_run_via_watch(WatchRunCommand::File { file: &file_abs }) {
+            return Ok(());
+        }
+
         if let Some(config) = self.find_config_for_file(file) {
             let reporter_file = self.write_reporter()?;
             let reporter_path = reporter_file.path().to_string_lossy().to_string();
             let workspace_config = self.write_workspace_config(&[config], &reporter_path)?;
             let ws_path = workspace_config.path().to_path_buf();
             let result = self
-                .spawn_and_stream(&[&file_str], tx, false, Some(&ws_path), None)
+                .spawn_and_stream(&[&file_abs], tx, false, Some(&ws_path), None)
                 .await;
             drop(workspace_config);
             drop(reporter_file);
             result
         } else {
-            self.spawn_and_stream(&[&file_str], tx, false, None, None)
+            self.spawn_and_stream(&[&file_abs], tx, false, None, None)
                 .await
         }
     }
@@ -376,7 +471,14 @@ impl TestRunner for VitestRunner {
         test_name: &str,
         tx: mpsc::UnboundedSender<TestEvent>,
     ) -> Result<()> {
-        let file_str = file.to_string_lossy().to_string();
+        let file_abs = file.to_string_lossy().to_string();
+        if self.try_run_via_watch(WatchRunCommand::Test {
+            file: &file_abs,
+            name: test_name,
+        }) {
+            return Ok(());
+        }
+
         if let Some(config) = self.find_config_for_file(file) {
             let reporter_file = self.write_reporter()?;
             let reporter_path = reporter_file.path().to_string_lossy().to_string();
@@ -384,7 +486,7 @@ impl TestRunner for VitestRunner {
             let ws_path = workspace_config.path().to_path_buf();
             let result = self
                 .spawn_and_stream(
-                    &[&file_str, "-t", test_name],
+                    &[&file_abs, "-t", test_name],
                     tx,
                     false,
                     Some(&ws_path),
@@ -395,7 +497,7 @@ impl TestRunner for VitestRunner {
             drop(reporter_file);
             result
         } else {
-            self.spawn_and_stream(&[&file_str, "-t", test_name], tx, false, None, None)
+            self.spawn_and_stream(&[&file_abs, "-t", test_name], tx, false, None, None)
                 .await
         }
     }
@@ -418,6 +520,10 @@ impl TestRunner for VitestRunner {
             drop(reporter_file);
             result
         }
+    }
+
+    fn stop_watch(&self) {
+        *self.watch_stdin.lock().unwrap() = None;
     }
 
     fn name(&self) -> &str {

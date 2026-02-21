@@ -4,18 +4,14 @@ export default class LensReporter {
     this._originalWrite = process.stdout.write.bind(process.stdout);
 
     // Intercept stdout.write to capture console.log from tests.
-    // With --disableConsoleIntercept, console.log goes directly to stdout.
-    // We wrap non-NDJSON lines with the current file context.
     process.stdout.write = (chunk, encoding, callback) => {
       const str = typeof chunk === "string" ? chunk : chunk.toString();
       const trimmed = str.trim();
 
-      // Our own NDJSON lines start with '{' — pass through
       if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
         return this._originalWrite(chunk, encoding, callback);
       }
 
-      // Non-JSON output while a file is running = console.log from test code
       if (this._currentFile && trimmed) {
         const event =
           JSON.stringify({
@@ -28,6 +24,92 @@ export default class LensReporter {
 
       return this._originalWrite(chunk, encoding, callback);
     };
+  }
+
+  onInit(vitest) {
+    this.ctx = vitest;
+    this._emit({ type: "output", line: "[REPORTER] Initialized" });
+
+    process.stdout.on("error", () => process.exit(0));
+
+    // Prevent the stdin listener from keeping the process alive in non-watch (vitest run) mode.
+    process.stdin.unref();
+
+    process.stdin.on("data", async (data) => {
+      const lines = data.toString().split("\n");
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("LENS_RUN:")) {
+          try {
+            const cmd = JSON.parse(trimmed.substring(9));
+            this._emit({
+              type: "output",
+              line: "[REPORTER] Command: " + JSON.stringify(cmd),
+            });
+            await this._handleCommand(cmd);
+          } catch (e) {
+            this._emit({
+              type: "error",
+              message:
+                "Reporter failed to handle command: " +
+                e.message +
+                "\n" +
+                e.stack,
+            });
+          }
+        }
+      }
+    });
+  }
+
+  async _handleCommand(cmd) {
+    if (!this.ctx) {
+      this._emit({ type: "error", message: "Reporter context not available" });
+      return;
+    }
+
+    // Clear filters by default
+    this.ctx.config.testNamePattern = undefined;
+
+    if (cmd.type === "run-all") {
+      await this.ctx.rerunFiles();
+    } else if (cmd.type === "run-file" || cmd.type === "run-test") {
+      if (cmd.type === "run-test") {
+        // Escape special regex characters in the test name
+        const escapedName = cmd.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        this.ctx.config.testNamePattern = new RegExp(escapedName);
+      }
+
+      // Try to find the file in the projects to ensure it's a known test file.
+      // If we can't find it precisely, we just pass the path and let Vitest decide.
+      let files = [cmd.file];
+
+      try {
+        const allTestFiles = this.ctx.projects.flatMap((p) => {
+          // Try different ways to get files depending on vitest version
+          if (p.specifier?.files) return Array.from(p.specifier.files);
+          if (p.testFiles) return p.testFiles;
+          return [];
+        });
+
+        if (allTestFiles.length > 0) {
+          const found = allTestFiles.find(
+            (f) => f === cmd.file || f.endsWith(cmd.file),
+          );
+          if (found) {
+            files = [found];
+          }
+        }
+      } catch (e) {
+        this._emit({
+          type: "output",
+          line: "[REPORTER] Note: Precise file lookup failed, using path directly",
+        });
+      }
+
+      this._emit({ type: "output", line: `[REPORTER] Rerunning: ${files[0]}` });
+      await this.ctx.rerunFiles(files);
+    }
   }
 
   onTestRunStart(specifications) {
@@ -102,7 +184,6 @@ export default class LensReporter {
   }
 
   onTestRunEnd(modules, unhandledErrors, reason) {
-    // Emit failures for unhandled errors
     for (const err of unhandledErrors) {
       let message = "Unknown error";
       let stack;
@@ -126,11 +207,10 @@ export default class LensReporter {
       });
     }
 
+    let total = 0;
     let passed = 0;
     let failed = 0;
     let skipped = 0;
-    let total = 0;
-    let duration = 0;
 
     for (const mod of modules) {
       for (const test of mod.children.allTests()) {

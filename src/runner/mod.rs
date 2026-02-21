@@ -39,6 +39,10 @@ pub trait TestRunner: Send + Sync {
     /// The process stays alive until the task is aborted.
     async fn run_all_watch(&self, tx: mpsc::UnboundedSender<TestEvent>) -> Result<()>;
 
+    /// Called when watch mode is stopped so the runner can release its watch process handle.
+    #[allow(dead_code)]
+    fn stop_watch(&self) {}
+
     /// Display name for this runner (e.g., "Vitest").
     #[allow(dead_code)]
     fn name(&self) -> &str;

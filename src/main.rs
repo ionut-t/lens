@@ -91,6 +91,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                         app.watch_handle = Some(handle);
                                     } else {
                                         // Stop watch mode
+                                        runner.stop_watch();
                                         if let Some(handle) = app.watch_handle.take() {
                                             handle.abort();
                                         }
@@ -216,4 +217,3 @@ fn start_runner(
     });
     runner_rx
 }
-
