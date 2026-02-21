@@ -1,23 +1,25 @@
 mod app;
+mod editor;
 mod models;
 mod runner;
 mod ui;
 
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use crossterm::{
     ExecutableCommand,
     event::{self, Event},
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::prelude::*;
+use tokio::sync::mpsc;
 use tokio::time::{Duration, interval};
 
 use app::{Action, App, handle_action, handle_test_event, trigger_action};
-use runner::TestRunner;
+use runner::{TestRunner, resolve_nx_project};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -36,29 +38,6 @@ async fn main() -> Result<()> {
     result
 }
 
-/// Resolve an Nx project name to its root directory (relative to workspace).
-fn resolve_nx_project(workspace: &Path, name: &str) -> Result<PathBuf> {
-    let output = std::process::Command::new("npx")
-        .args(["nx", "show", "project", name, "--json"])
-        .current_dir(workspace)
-        .output()
-        .context("failed to run `npx nx show project`")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("nx project '{}' not found: {}", name, stderr.trim());
-    }
-
-    let json: serde_json::Value =
-        serde_json::from_slice(&output.stdout).context("failed to parse nx project JSON")?;
-
-    let root = json["root"]
-        .as_str()
-        .context("nx project JSON missing 'root' field")?;
-
-    Ok(workspace.join(root))
-}
-
 async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let project = std::env::args().nth(1);
@@ -67,45 +46,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
     app.project_name = project.clone();
     let mut tick = interval(Duration::from_millis(100));
     let mut test_runner: Option<Arc<dyn TestRunner>> = None;
-
-    // Resolve Nx project and discover files asynchronously
-    let (runner_tx, runner_rx) = tokio::sync::oneshot::channel::<Arc<dyn TestRunner>>();
-    let mut runner_rx = Some(runner_rx);
-    {
-        let tx = app.event_tx.clone();
-        let ws = workspace.clone();
-        tokio::spawn(async move {
-            // Resolve Nx project root if a project name was given
-            let project_root = if let Some(name) = project {
-                let ws_clone = ws.clone();
-                tokio::task::spawn_blocking(move || resolve_nx_project(&ws_clone, &name).ok())
-                    .await
-                    .ok()
-                    .flatten()
-            } else {
-                None
-            };
-
-            let discover_root = project_root.as_deref().unwrap_or(&ws).to_path_buf();
-
-            let r: Arc<dyn TestRunner> = runner::detect(ws.clone(), project_root);
-            let _ = runner_tx.send(Arc::clone(&r));
-
-            if let Ok(files) = r.discover(&discover_root).await {
-                let displays: Vec<String> = files
-                    .iter()
-                    .map(|f| {
-                        f.path
-                            .strip_prefix(&ws)
-                            .unwrap_or(&f.path)
-                            .to_string_lossy()
-                            .to_string()
-                    })
-                    .collect();
-                let _ = tx.send(app::TestEvent::DiscoveryComplete { files: displays });
-            }
-        });
-    }
+    let mut runner_rx = Some(start_runner(workspace, project, app.event_tx.clone()));
 
     loop {
         terminal.draw(|frame| ui::draw(frame, &mut app))?;
@@ -120,11 +61,10 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                         if let Some(ref runner) = test_runner {
                             match action {
                                 Action::RunAll => {
-                                    handle_action(&mut app,action);
+                                    handle_action(&mut app, action);
                                     app.run_start = Some(std::time::Instant::now());
                                     let tx = app.event_tx.clone();
                                     let runner = Arc::clone(runner);
-
                                     tokio::spawn(async move {
                                         if let Err(e) = runner.run_all(tx.clone()).await {
                                             let _ = tx.send(app::TestEvent::Error {
@@ -134,7 +74,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                     });
                                 }
                                 Action::ToggleWatch => {
-                                    handle_action(&mut app,Action::ToggleWatch);
+                                    handle_action(&mut app, Action::ToggleWatch);
                                     if app.watch_mode {
                                         // Start watch mode
                                         let tx = app.event_tx.clone();
@@ -158,7 +98,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                     }
                                 }
                                 other => {
-                                    handle_action(&mut app,other);
+                                    handle_action(&mut app, other);
                                     for pending in app.pending_runs.drain(..) {
                                         app.running = true;
                                         app.run_start = Some(std::time::Instant::now());
@@ -193,7 +133,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                 Action::RunAll | Action::RerunFailed | Action::ToggleWatch | Action::Select => {
                                     app.output_lines.push("[INFO] Runner is still loading...".into());
                                 }
-                                other => handle_action(&mut app,other),
+                                other => handle_action(&mut app, other),
                             }
                         }
                     }
@@ -216,7 +156,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
             }
 
             Some(test_event) = event_rx.recv() => {
-                handle_test_event(&mut app,test_event);
+                handle_test_event(&mut app, test_event);
             }
 
             _ = tick.tick() => {
@@ -227,30 +167,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
         }
 
         if let Some((path, line, col)) = app.pending_editor.take() {
-            // Suspend TUI, open editor, restore TUI
-            terminal::disable_raw_mode()?;
-            io::stdout().execute(LeaveAlternateScreen)?;
-
-            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".into());
-            let path_str = path.to_string_lossy().to_string();
-            let mut cmd = std::process::Command::new(&editor);
-
-            match (line, col) {
-                (Some(l), Some(c)) => {
-                    // +call cursor(line,col) works in vim and nvim
-                    cmd.arg(format!("+call cursor({},{})", l, c));
-                }
-                (Some(l), None) => {
-                    cmd.arg(format!("+{}", l));
-                }
-                _ => {}
-            }
-            cmd.arg(&path_str);
-            let _ = cmd.status();
-
-            io::stdout().execute(EnterAlternateScreen)?;
-            terminal::enable_raw_mode()?;
-            terminal.clear()?;
+            editor::open(terminal, path, line, col)?;
         }
 
         if app.should_quit {
@@ -260,3 +177,43 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
 
     Ok(())
 }
+
+/// Spawn the async runner-init task and return a receiver for the constructed runner.
+fn start_runner(
+    workspace: PathBuf,
+    project: Option<String>,
+    event_tx: mpsc::UnboundedSender<app::TestEvent>,
+) -> tokio::sync::oneshot::Receiver<Arc<dyn TestRunner>> {
+    let (runner_tx, runner_rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let project_root = if let Some(name) = project {
+            let ws_clone = workspace.clone();
+            tokio::task::spawn_blocking(move || resolve_nx_project(&ws_clone, &name).ok())
+                .await
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
+
+        let discover_root = project_root.as_deref().unwrap_or(&workspace).to_path_buf();
+        let r: Arc<dyn TestRunner> = runner::detect(workspace.clone(), project_root);
+        let _ = runner_tx.send(Arc::clone(&r));
+
+        if let Ok(files) = r.discover(&discover_root).await {
+            let displays: Vec<String> = files
+                .iter()
+                .map(|f| {
+                    f.path
+                        .strip_prefix(&workspace)
+                        .unwrap_or(&f.path)
+                        .to_string_lossy()
+                        .to_string()
+                })
+                .collect();
+            let _ = event_tx.send(app::TestEvent::DiscoveryComplete { files: displays });
+        }
+    });
+    runner_rx
+}
+

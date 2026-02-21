@@ -3,7 +3,7 @@ pub mod vitest;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
@@ -47,4 +47,27 @@ pub trait TestRunner: Send + Sync {
 /// Detect and construct the appropriate runner for the given workspace.
 pub fn detect(workspace: PathBuf, project_root: Option<PathBuf>) -> Arc<dyn TestRunner> {
     Arc::new(vitest::VitestRunner::new(workspace, project_root))
+}
+
+/// Resolve an Nx project name to its root directory (relative to workspace).
+pub fn resolve_nx_project(workspace: &Path, name: &str) -> Result<PathBuf> {
+    let output = std::process::Command::new("npx")
+        .args(["nx", "show", "project", name, "--json"])
+        .current_dir(workspace)
+        .output()
+        .context("failed to run `npx nx show project`")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("nx project '{}' not found: {}", name, stderr.trim());
+    }
+
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).context("failed to parse nx project JSON")?;
+
+    let root = json["root"]
+        .as_str()
+        .context("nx project JSON missing 'root' field")?;
+
+    Ok(workspace.join(root))
 }
