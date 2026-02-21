@@ -65,6 +65,9 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
             app.progress_total = 0;
             app.progress_done = 0;
             app.running = true;
+            // For manual runs run_start is set in main before the runner spawns,
+            // preserving warmup time. For watch re-runs it won't be set, so we fall back here.
+            app.run_start.get_or_insert_with(std::time::Instant::now);
         }
 
         TestEvent::TestsCollected { count } => {
@@ -131,6 +134,7 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
             app.full_run = false;
             summary.duration = app
                 .run_start
+                .take()
                 .map(|start| start.elapsed().as_millis() as u64)
                 .unwrap_or(summary.duration);
 
