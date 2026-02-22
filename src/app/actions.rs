@@ -361,8 +361,13 @@ pub fn handle_action(app: &mut App, action: Action) {
                 while let Some(id) = current {
                     if let Some(node) = app.tree.get(id) {
                         if node.kind == NodeKind::File {
-                            if let Ok(mut clipboard) = Clipboard::new() {
-                                let _ = clipboard.set_text(node.name.clone());
+                            match Clipboard::new() {
+                                Ok(mut cb) => match cb.set_text(node.name.clone()) {
+                                    Ok(_) => app.notifier.info("Path yanked", 1),
+                                    Err(_) => app.notifier.error("Failed to copy to clipboard"),
+                                },
+
+                                Err(_) => app.notifier.error("Clipboard unavailable"),
                             }
                             break;
                         }

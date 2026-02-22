@@ -2,13 +2,18 @@ use std::path::PathBuf;
 
 use tokio::sync::mpsc;
 
-use crate::models::{RunSummary, TestTree};
+use crate::{
+    app::notifier::Notifier,
+    models::{RunSummary, TestTree},
+};
 
 pub mod actions;
 pub mod events;
+pub mod notifier;
 
 pub use actions::{Action, handle_action, trigger_action};
 pub use events::{TestEvent, handle_test_event};
+pub use notifier::NotificationKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Panel {
@@ -53,6 +58,7 @@ pub struct App {
     pub summary: Option<RunSummary>,
     pub run_start: Option<std::time::Instant>,
     pub project_name: Option<String>,
+    pub notifier: Notifier,
 }
 
 impl App {
@@ -87,6 +93,7 @@ impl App {
             summary: None,
             run_start: None,
             project_name: None,
+            notifier: Notifier::new(),
         };
         (app, event_rx)
     }

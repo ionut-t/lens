@@ -4,6 +4,7 @@ use crate::app::App;
 
 use super::detail_panel;
 use super::failure_list;
+use super::notifications;
 use super::search_box;
 use super::status_bar;
 use super::test_tree;
@@ -40,4 +41,5 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.detail_scroll_offset = detail_panel::draw(frame, app, app.detail_scroll_offset, right_area);
 
     status_bar::draw(frame, app, status_area);
+    notifications::draw(frame, app);
 }

@@ -148,9 +148,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                         test_runner = Some(r);
                     }
                     Err(_) => {
-                        handle_test_event(&mut app, app::TestEvent::Error {
-                            message: "Failed to initialize test runner".into(),
-                        });
+                        app.notifier.error("Failed to initialize test runner");
                         app.discovering = false;
                     }
                 }
@@ -164,11 +162,14 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                 if app.discovering || app.running {
                     app.spinner_tick = app.spinner_tick.wrapping_add(1);
                 }
+                app.notifier.prune_expired();
             }
         }
 
-        if let Some((path, line, col)) = app.pending_editor.take() {
-            editor::open(terminal, path, line, col)?;
+        if let Some((path, line, col)) = app.pending_editor.take()
+            && let Err(e) = editor::open(terminal, path, line, col)
+        {
+            app.notifier.error(e.to_string());
         }
 
         if app.should_quit {
@@ -187,32 +188,52 @@ fn start_runner(
 ) -> tokio::sync::oneshot::Receiver<Arc<dyn TestRunner>> {
     let (runner_tx, runner_rx) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
-        let project_root = if let Some(name) = project {
-            let ws_clone = workspace.clone();
-            tokio::task::spawn_blocking(move || resolve_nx_project(&ws_clone, &name).ok())
+        let project_root = match project {
+            Some(name) => {
+                let ws_clone = workspace.clone();
+                let name_clone = name.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    resolve_nx_project(&ws_clone, &name_clone).ok()
+                })
                 .await
                 .ok()
-                .flatten()
-        } else {
-            None
+                .flatten();
+                if result.is_none() {
+                    let r: Arc<dyn TestRunner> = runner::detect(workspace, None);
+                    let _ = runner_tx.send(Arc::clone(&r));
+                    let _ = event_tx.send(app::TestEvent::DiscoveryFailed {
+                        message: format!("Nx project '{}' not found", name),
+                    });
+                    return;
+                }
+                result
+            }
+            None => None,
         };
 
         let discover_root = project_root.as_deref().unwrap_or(&workspace).to_path_buf();
         let r: Arc<dyn TestRunner> = runner::detect(workspace.clone(), project_root);
         let _ = runner_tx.send(Arc::clone(&r));
 
-        if let Ok(files) = r.discover(&discover_root).await {
-            let displays: Vec<String> = files
-                .iter()
-                .map(|f| {
-                    f.path
-                        .strip_prefix(&workspace)
-                        .unwrap_or(&f.path)
-                        .to_string_lossy()
-                        .to_string()
-                })
-                .collect();
-            let _ = event_tx.send(app::TestEvent::DiscoveryComplete { files: displays });
+        match r.discover(&discover_root).await {
+            Ok(files) => {
+                let displays: Vec<String> = files
+                    .iter()
+                    .map(|f| {
+                        f.path
+                            .strip_prefix(&workspace)
+                            .unwrap_or(&f.path)
+                            .to_string_lossy()
+                            .to_string()
+                    })
+                    .collect();
+                let _ = event_tx.send(app::TestEvent::DiscoveryComplete { files: displays });
+            }
+            Err(_) => {
+                let _ = event_tx.send(app::TestEvent::DiscoveryFailed {
+                    message: "Failed to discover test files".into(),
+                });
+            }
         }
     });
     runner_rx

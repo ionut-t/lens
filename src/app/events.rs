@@ -52,6 +52,10 @@ pub enum TestEvent {
     DiscoveryComplete {
         files: Vec<String>,
     },
+    /// Test file discovery failed (e.g. glob error, Nx project not found).
+    DiscoveryFailed {
+        message: String,
+    },
 }
 
 /// Process a test event from a runner.
@@ -168,6 +172,11 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
                 find_or_create_file_node(app, display, display);
             }
             app.discovering = false;
+        }
+
+        TestEvent::DiscoveryFailed { message } => {
+            app.discovering = false;
+            app.notifier.error(message);
         }
     }
 }

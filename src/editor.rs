@@ -22,12 +22,13 @@ pub fn open(
     let mut cmd = std::process::Command::new(&editor);
 
     build_args(&mut cmd, &editor, &path, line, col);
-    let _ = cmd.status();
+    let result = cmd.status();
 
     io::stdout().execute(EnterAlternateScreen)?;
     terminal::enable_raw_mode()?;
     terminal.clear()?;
 
+    result.map_err(|_| anyhow::anyhow!("editor '{}' not found or failed to launch", editor))?;
     Ok(())
 }
 
