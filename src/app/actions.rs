@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use arboard::Clipboard;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::{
@@ -33,6 +34,7 @@ pub enum Action {
     FilterExit,
     FilterApply,
     OpenInEditor,
+    YankPath,
 }
 
 /// Process a keyboard action.
@@ -352,6 +354,25 @@ pub fn handle_action(app: &mut App, action: Action) {
                 }
             }
         }
+
+        Action::YankPath => {
+            if let Some(node_id) = app.selected_node_id() {
+                let mut current = Some(node_id);
+                while let Some(id) = current {
+                    if let Some(node) = app.tree.get(id) {
+                        if node.kind == NodeKind::File {
+                            if let Ok(mut clipboard) = Clipboard::new() {
+                                let _ = clipboard.set_text(node.name.clone());
+                            }
+                            break;
+                        }
+                        current = node.parent;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -401,6 +422,7 @@ fn map_key(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('e') => Some(Action::OpenInEditor),
         KeyCode::PageUp => Some(Action::ScrollUp),
         KeyCode::PageDown => Some(Action::ScrollDown),
+        KeyCode::Char('y') => Some(Action::YankPath),
         _ => None,
     }
 }
