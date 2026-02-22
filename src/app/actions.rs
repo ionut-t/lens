@@ -29,8 +29,7 @@ pub enum Action {
     RerunFailed,
     ToggleWatch,
     FilterEnter,
-    FilterInput(char),
-    FilterBackspace,
+    FilterKey(KeyEvent),
     FilterExit,
     FilterApply,
     OpenInEditor,
@@ -308,18 +307,15 @@ pub fn handle_action(app: &mut App, action: Action) {
             app.filter_active = true;
         }
 
-        Action::FilterInput(c) => {
-            app.filter_query.push(c);
+        Action::FilterKey(key) => {
+            use tui_input::backend::crossterm::EventHandler;
+            app.filter.handle_event(&crossterm::event::Event::Key(key));
             app.selected_tree_index = 0;
             app.tree_scroll_offset = 0;
         }
 
-        Action::FilterBackspace => {
-            app.filter_query.pop();
-        }
-
         Action::FilterExit => {
-            app.filter_query.clear();
+            app.filter.reset();
             app.filter_active = false;
         }
 
@@ -364,11 +360,9 @@ pub fn trigger_action(key: KeyEvent, filter_active: bool) -> Option<Action> {
         match key.code {
             KeyCode::Esc => Some(Action::FilterExit),
             KeyCode::Enter => Some(Action::FilterApply),
-            KeyCode::Backspace => Some(Action::FilterBackspace),
             KeyCode::Up => Some(Action::NavigateUp),
             KeyCode::Down => Some(Action::NavigateDown),
-            KeyCode::Char(c) => Some(Action::FilterInput(c)),
-            _ => None,
+            _ => Some(Action::FilterKey(key)),
         }
     } else {
         map_key(key)

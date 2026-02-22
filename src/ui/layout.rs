@@ -21,13 +21,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     app.failed_viewport_height = failed_area.height.saturating_sub(2) as usize;
 
-    if app.filter_active || !app.filter_query.is_empty() {
+    if app.filter_active || !app.filter.value().is_empty() {
         let [search_area, filtered_tree_area] =
             Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(tree_area);
 
         app.tree_viewport_height = filtered_tree_area.height.saturating_sub(2) as usize;
 
-        search_box::draw(frame, &app.filter_query, app.filter_active, search_area);
+        search_box::draw(frame, &app.filter, app.filter_active, search_area);
         test_tree::draw(frame, app, filtered_tree_area);
     } else {
         app.tree_viewport_height = tree_area.height.saturating_sub(2) as usize;

@@ -47,7 +47,7 @@ pub struct App {
     pub pending_editor: Option<(PathBuf, Option<u32>, Option<u32>)>,
     pub should_quit: bool,
     pub filter_active: bool,
-    pub filter_query: String,
+    pub filter: tui_input::Input,
     pub discovering: bool,
     pub spinner_tick: usize,
     pub summary: Option<RunSummary>,
@@ -81,7 +81,7 @@ impl App {
             pending_editor: None,
             should_quit: false,
             filter_active: false,
-            filter_query: String::new(),
+            filter: tui_input::Input::default(),
             discovering: true,
             spinner_tick: 0,
             summary: None,
@@ -93,10 +93,12 @@ impl App {
 
     /// Returns visible nodes respecting the current filter query.
     pub fn visible_tree_nodes(&self) -> Vec<(usize, usize)> {
-        if self.filter_query.is_empty() {
+        let filter_query = self.filter.value();
+
+        if filter_query.is_empty() {
             self.tree.visible_nodes()
         } else {
-            self.tree.visible_nodes_filtered(&self.filter_query)
+            self.tree.visible_nodes_filtered(filter_query)
         }
     }
 
