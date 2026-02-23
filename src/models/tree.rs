@@ -209,6 +209,11 @@ impl TestTree {
         if b.priority() > a.priority() { b } else { a }
     }
 
+    /// Count nodes by kind.
+    pub fn count_kind(&self, kind: NodeKind) -> usize {
+        self.nodes.iter().filter(|n| n.kind == kind).count()
+    }
+
     /// Collect all node ids with Failed status.
     pub fn failed_nodes(&self) -> Vec<usize> {
         self.nodes

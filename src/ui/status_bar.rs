@@ -1,7 +1,10 @@
 use ratatui::{prelude::*, widgets::Paragraph};
 
 use super::theme;
-use crate::{app::App, models::RunSummary};
+use crate::{
+    app::App,
+    models::{NodeKind, RunSummary},
+};
 
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -113,12 +116,40 @@ fn get_help(app: &App) -> Line<'_> {
 }
 
 fn get_summary(app: &App) -> Line<'_> {
+    let file_count = app.tree.count_kind(NodeKind::File);
+    let test_count = app.tree.count_kind(NodeKind::Test);
+    let counts: Vec<Span> = if file_count > 0 || test_count > 0 {
+        let mut counts = vec![
+            Span::styled(
+                format!("{}", file_count),
+                Style::default().fg(theme::OVERLAY0),
+            ),
+            Span::styled(" files  ", Style::default().fg(theme::OVERLAY0)),
+        ];
+
+        if test_count > 0 {
+            counts.extend([
+                Span::styled(
+                    format!("{}", test_count),
+                    Style::default().fg(theme::OVERLAY0),
+                ),
+                Span::styled(" tests  ", Style::default().fg(theme::OVERLAY0)),
+            ]);
+        }
+
+        counts
+    } else {
+        vec![]
+    };
+
     if app.running {
         let spinner = SPINNER_FRAMES[app.spinner_tick % SPINNER_FRAMES.len()];
-        Line::from(vec![Span::styled(
+        let mut spans = counts;
+        spans.push(Span::styled(
             format!("{} running... ", spinner),
             Style::default().fg(theme::YELLOW),
-        )])
+        ));
+        Line::from(spans)
     } else if !app.discovering {
         if let Some(summary) = &app.summary {
             let RunSummary {
@@ -129,7 +160,8 @@ fn get_summary(app: &App) -> Line<'_> {
             } = summary;
 
             if passed + failed + skipped > 0 {
-                Line::from(vec![
+                let mut spans = counts;
+                spans.extend([
                     Span::styled("✔ ", Style::default().fg(theme::GREEN)),
                     Span::styled(format!("{}", passed), Style::default().fg(theme::GREEN)),
                     Span::styled("  ✘ ", Style::default().fg(theme::RED)),
@@ -141,12 +173,13 @@ fn get_summary(app: &App) -> Line<'_> {
                         format!("{:.1}s ", summary.duration as f64 / 1000.0),
                         Style::default().fg(theme::MAUVE),
                     ),
-                ])
+                ]);
+                Line::from(spans)
             } else {
-                Line::from("")
+                Line::from(counts)
             }
         } else {
-            Line::from("")
+            Line::from(counts)
         }
     } else {
         Line::from("")
