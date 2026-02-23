@@ -25,6 +25,8 @@ pub enum Action {
     JumpToEnd,
     JumpToPrevFile,
     JumpToNextFile,
+    JumpToPrevError,
+    JumpToNextError,
     Select,
     RunAll,
     RerunFailed,
@@ -228,6 +230,40 @@ pub fn handle_action(app: &mut App, action: Action) {
             }
         }
 
+        Action::JumpToPrevError => {
+            if app.active_panel == Panel::TestTree {
+                let nodes = app.visible_tree_nodes();
+                for i in (0..app.selected_tree_index).rev() {
+                    if let Some(&(node_id, _)) = nodes.get(i)
+                        && let Some(node) = app.tree.get(node_id)
+                        && node.status == TestStatus::Failed
+                    {
+                        app.selected_tree_index = i;
+                        app.detail_scroll_offset = 0;
+                        app.adjust_tree_scroll();
+                        break;
+                    }
+                }
+            }
+        }
+
+        Action::JumpToNextError => {
+            if app.active_panel == Panel::TestTree {
+                let nodes = app.visible_tree_nodes();
+                for i in (app.selected_tree_index + 1)..nodes.len() {
+                    if let Some(&(node_id, _)) = nodes.get(i)
+                        && let Some(node) = app.tree.get(node_id)
+                        && node.status == TestStatus::Failed
+                    {
+                        app.selected_tree_index = i;
+                        app.detail_scroll_offset = 0;
+                        app.adjust_tree_scroll();
+                        break;
+                    }
+                }
+            }
+        }
+
         Action::Select => {
             if app.active_panel == Panel::TestTree
                 && let Some(&(node_id, _)) = app.visible_tree_nodes().get(app.selected_tree_index)
@@ -419,6 +455,8 @@ fn map_key(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('G') | KeyCode::End => Some(Action::JumpToEnd),
         KeyCode::Char('{') => Some(Action::JumpToPrevFile),
         KeyCode::Char('}') => Some(Action::JumpToNextFile),
+        KeyCode::Char('[') => Some(Action::JumpToPrevError),
+        KeyCode::Char(']') => Some(Action::JumpToNextError),
         KeyCode::Enter => Some(Action::Select),
         KeyCode::Char('a') => Some(Action::RunAll),
         KeyCode::Char('r') => Some(Action::RerunFailed),
