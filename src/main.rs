@@ -11,9 +11,10 @@ use std::sync::Arc;
 use anyhow::Result;
 use crossterm::{
     ExecutableCommand,
-    event::{self, Event},
+    event::{Event, EventStream},
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use futures_util::StreamExt;
 use ratatui::prelude::*;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, interval};
@@ -47,14 +48,17 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
     let mut tick = interval(Duration::from_millis(100));
     let mut test_runner: Option<Arc<dyn TestRunner>> = None;
     let mut runner_rx = Some(start_runner(workspace, project, app.event_tx.clone()));
+    let mut event_stream = EventStream::new();
 
     loop {
         terminal.draw(|frame| ui::draw(frame, &mut app))?;
 
         tokio::select! {
-            _ = async {
-                if event::poll(Duration::from_millis(16)).unwrap_or(false) &&
-                     let Ok(Event::Key(key)) = event::read() {
+            maybe_event = event_stream.next() => {
+                match maybe_event {
+                None => break,
+                Some(Err(e)) => return Err(e.into()),
+                Some(Ok(Event::Key(key))) => {
                     let action = trigger_action(key, app.filter_active);
 
                     if let Some(action) = action {
@@ -139,7 +143,9 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                         }
                     }
                 }
-            } => {}
+                Some(Ok(_)) => {}
+                }
+            }
 
             result = async { runner_rx.as_mut().unwrap().await }, if runner_rx.is_some() => {
                 runner_rx = None;
