@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::{
-    app::App,
+    app::{App, WatchScope},
     models::{NodeKind, RunSummary, TestResult, TestStatus},
 };
 
@@ -143,6 +143,8 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
                 .unwrap_or(summary.duration);
 
             app.summary = Some(summary);
+            // Tree may have gained new nodes during the run; recompute watched set.
+            app.watched_ids_stale = true;
         }
 
         TestEvent::ConsoleLog { file, content } => {
@@ -165,6 +167,8 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
             app.watch_mode = false;
             app.watch_handle = None;
             app.running = false;
+            app.watch_scope = WatchScope::None;
+            app.watched_ids_stale = true;
         }
 
         TestEvent::DiscoveryComplete { files } => {

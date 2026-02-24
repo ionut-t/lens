@@ -1,10 +1,13 @@
-use std::path::PathBuf;
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use tokio::sync::mpsc;
 
 use crate::{
     app::notifier::Notifier,
-    models::{RunSummary, TestTree},
+    models::{NodeKind, RunSummary, TestTree},
 };
 
 pub mod actions;
@@ -14,6 +17,14 @@ pub mod notifier;
 pub use actions::{Action, handle_action, trigger_action};
 pub use events::{TestEvent, handle_test_event};
 pub use notifier::NotificationKind;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum WatchScope {
+    None,
+    All,
+    File(PathBuf),
+    Test { file: PathBuf, name: String },
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Panel {
@@ -43,6 +54,10 @@ pub struct App {
     pub full_run: bool,
     pub watch_mode: bool,
     pub watch_handle: Option<tokio::task::JoinHandle<()>>,
+    pub watch_scope: WatchScope,
+    /// Cached set of node IDs highlighted by the current watch scope.
+    pub watched_ids: HashSet<usize>,
+    pub watched_ids_stale: bool,
     pub progress_total: usize,
     pub progress_done: usize,
     pub event_tx: mpsc::UnboundedSender<TestEvent>,
@@ -79,6 +94,9 @@ impl App {
             full_run: false,
             watch_mode: false,
             watch_handle: None,
+            watch_scope: WatchScope::None,
+            watched_ids: HashSet::new(),
+            watched_ids_stale: false,
             progress_total: 0,
             progress_done: 0,
             event_tx,
@@ -96,6 +114,12 @@ impl App {
             notifier: Notifier::new(),
         };
         (app, event_rx)
+    }
+
+    /// Recompute `watched_ids` from the current scope and tree. Clears the stale flag.
+    pub fn refresh_watched_ids(&mut self) {
+        self.watched_ids_stale = false;
+        self.watched_ids = compute_watched_ids(&self.tree, &self.workspace, &self.watch_scope);
     }
 
     /// Returns visible nodes respecting the current filter query.
@@ -154,6 +178,70 @@ impl App {
         {
             self.failed_scroll_offset =
                 self.selected_failed_index - self.failed_viewport_height + 1;
+        }
+    }
+}
+
+fn compute_watched_ids(tree: &TestTree, workspace: &Path, scope: &WatchScope) -> HashSet<usize> {
+    let mut ids = HashSet::new();
+    match scope {
+        WatchScope::None | WatchScope::All => {}
+
+        WatchScope::File(scope_path) => {
+            if let Some(file_id) = find_file_node(tree, workspace, scope_path) {
+                collect_subtree(tree, file_id, &mut ids);
+            }
+        }
+
+        WatchScope::Test {
+            file,
+            name: watch_name,
+        } => {
+            if let Some(file_id) = find_file_node(tree, workspace, file) {
+                ids.insert(file_id);
+                let mut stack: Vec<usize> = tree
+                    .get(file_id)
+                    .map(|n| n.children.clone())
+                    .unwrap_or_default();
+                while let Some(id) = stack.pop() {
+                    let Some(node) = tree.get(id) else { continue };
+                    if (node.kind == NodeKind::Test || node.kind == NodeKind::Suite)
+                        && node.name == *watch_name
+                    {
+                        collect_subtree(tree, id, &mut ids);
+                        // Add every ancestor suite between this node and the file.
+                        let mut cur = node.parent;
+                        while let Some(anc_id) = cur {
+                            if anc_id == file_id {
+                                break;
+                            }
+                            ids.insert(anc_id);
+                            cur = tree.get(anc_id).and_then(|n| n.parent);
+                        }
+                    } else {
+                        stack.extend(node.children.iter().copied());
+                    }
+                }
+            }
+        }
+    }
+    ids
+}
+
+fn find_file_node(tree: &TestTree, workspace: &Path, scope_path: &Path) -> Option<usize> {
+    let rel = scope_path.strip_prefix(workspace).unwrap_or(scope_path);
+    let rel_str = rel.to_string_lossy();
+    tree.roots().iter().copied().find(|&id| {
+        tree.get(id)
+            .is_some_and(|n| n.name == rel_str.as_ref() || n.path.as_deref() == Some(scope_path))
+    })
+}
+
+fn collect_subtree(tree: &TestTree, id: usize, ids: &mut HashSet<usize>) {
+    ids.insert(id);
+    if let Some(node) = tree.get(id) {
+        for &child_id in &node.children {
+            collect_subtree(tree, child_id, ids);
         }
     }
 }

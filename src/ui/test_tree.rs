@@ -62,10 +62,16 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             let selected = absolute_i == app.selected_tree_index && focused;
             let name = node_display_name(app.project_name.as_ref(), node);
 
+            let name_color = if app.watched_ids.contains(&node_id) {
+                theme::TEAL
+            } else {
+                theme::TEXT
+            };
+
             let content = Line::from(vec![
                 Span::raw(indent),
                 Span::styled(icon, Style::default().fg(node.status.color())),
-                Span::styled(name, Style::default().fg(theme::TEXT)),
+                Span::styled(name, Style::default().fg(name_color)),
             ]);
 
             let item = ListItem::new(content);

@@ -61,6 +61,9 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
     let mut event_stream = EventStream::new();
 
     loop {
+        if app.watched_ids_stale {
+            app.refresh_watched_ids();
+        }
         terminal.draw(|frame| ui::draw(frame, &mut app))?;
 
         tokio::select! {
@@ -93,6 +96,8 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                             let _ = tx.send(app::TestEvent::WatchStopped);
                                         });
                                         app.watch_handle = Some(handle);
+                                        app.watch_scope = app::WatchScope::All;
+                                        app.watched_ids_stale = true;
                                     } else {
                                         let runner = Arc::clone(runner);
                                         tokio::spawn(async move {
@@ -112,6 +117,8 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                             handle.abort();
                                         }
                                         app.running = false;
+                                        app.watch_scope = app::WatchScope::None;
+                                        app.watched_ids_stale = true;
                                     }
                                     // Turned ON — nothing, process starts lazily on first run
                                 }
@@ -123,16 +130,17 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                         let tx = app.event_tx.clone();
 
                                         // In watch mode, stop the previous watch before starting a new one
-                                        if app.watch_mode {
-                                            if let Some(h) = app.watch_handle.take() {
+                                        if app.watch_mode &&
+                                             let Some(h) = app.watch_handle.take() {
                                                 h.abort();
-                                            }
                                         }
 
                                         let runner_clone = Arc::clone(runner);
                                         match pending {
                                             app::PendingRun::File(path) => {
                                                 if app.watch_mode {
+                                                    app.watch_scope = app::WatchScope::File(path.clone());
+                                                    app.watched_ids_stale = true;
                                                     let handle = tokio::spawn(async move {
                                                         if let Err(e) = runner_clone.run_file_watch(&path, tx.clone()).await {
                                                             let _ = tx.send(app::TestEvent::Error {
@@ -154,6 +162,11 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                             }
                                             app::PendingRun::Test { file, name } => {
                                                 if app.watch_mode {
+                                                    app.watch_scope = app::WatchScope::Test {
+                                                        file: file.clone(),
+                                                        name: name.clone(),
+                                                    };
+                                                    app.watched_ids_stale = true;
                                                     let handle = tokio::spawn(async move {
                                                         if let Err(e) = runner_clone.run_test_watch(&file, &name, tx.clone()).await {
                                                             let _ = tx.send(app::TestEvent::Error {

@@ -85,6 +85,10 @@ impl TestTree {
         id
     }
 
+    pub fn roots(&self) -> &[usize] {
+        &self.root_ids
+    }
+
     pub fn get(&self, id: usize) -> Option<&TestNode> {
         self.nodes.get(id)
     }
