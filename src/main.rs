@@ -78,20 +78,11 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                     handle_action(&mut app, action);
                                     app.run_start = Some(std::time::Instant::now());
                                     let tx = app.event_tx.clone();
-                                    let runner = Arc::clone(runner);
-                                    tokio::spawn(async move {
-                                        if let Err(e) = runner.run_all(tx.clone()).await {
-                                            let _ = tx.send(app::TestEvent::Error {
-                                                message: format!("Runner error: {}", e),
-                                            });
-                                        }
-                                    });
-                                }
-                                Action::ToggleWatch => {
-                                    handle_action(&mut app, Action::ToggleWatch);
                                     if app.watch_mode {
-                                        // Start watch mode
-                                        let tx = app.event_tx.clone();
+                                        // Stop any previous watch, then start a new global watch
+                                        if let Some(h) = app.watch_handle.take() {
+                                            h.abort();
+                                        }
                                         let runner = Arc::clone(runner);
                                         let handle = tokio::spawn(async move {
                                             if let Err(e) = runner.run_all_watch(tx.clone()).await {
@@ -99,18 +90,30 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                                     message: format!("Watch error: {}", e),
                                                 });
                                             }
-                                            // Notify app that watch process exited
                                             let _ = tx.send(app::TestEvent::WatchStopped);
                                         });
                                         app.watch_handle = Some(handle);
                                     } else {
-                                        // Stop watch mode
-                                        runner.stop_watch();
+                                        let runner = Arc::clone(runner);
+                                        tokio::spawn(async move {
+                                            if let Err(e) = runner.run_all(tx.clone()).await {
+                                                let _ = tx.send(app::TestEvent::Error {
+                                                    message: format!("Runner error: {}", e),
+                                                });
+                                            }
+                                        });
+                                    }
+                                }
+                                Action::ToggleWatch => {
+                                    handle_action(&mut app, Action::ToggleWatch);
+                                    if !app.watch_mode {
+                                        // Turned OFF — kill any active watch process
                                         if let Some(handle) = app.watch_handle.take() {
                                             handle.abort();
                                         }
                                         app.running = false;
                                     }
+                                    // Turned ON — nothing, process starts lazily on first run
                                 }
                                 other => {
                                     handle_action(&mut app, other);
@@ -118,25 +121,57 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                         app.running = true;
                                         app.run_start = Some(std::time::Instant::now());
                                         let tx = app.event_tx.clone();
-                                        let runner = Arc::clone(runner);
+
+                                        // In watch mode, stop the previous watch before starting a new one
+                                        if app.watch_mode {
+                                            if let Some(h) = app.watch_handle.take() {
+                                                h.abort();
+                                            }
+                                        }
+
+                                        let runner_clone = Arc::clone(runner);
                                         match pending {
                                             app::PendingRun::File(path) => {
-                                                tokio::spawn(async move {
-                                                    if let Err(e) = runner.run_file(&path, tx.clone()).await {
-                                                        let _ = tx.send(app::TestEvent::Error {
-                                                            message: format!("Runner error: {}", e),
-                                                        });
-                                                    }
-                                                });
+                                                if app.watch_mode {
+                                                    let handle = tokio::spawn(async move {
+                                                        if let Err(e) = runner_clone.run_file_watch(&path, tx.clone()).await {
+                                                            let _ = tx.send(app::TestEvent::Error {
+                                                                message: format!("Watch error: {}", e),
+                                                            });
+                                                        }
+                                                        let _ = tx.send(app::TestEvent::WatchStopped);
+                                                    });
+                                                    app.watch_handle = Some(handle);
+                                                } else {
+                                                    tokio::spawn(async move {
+                                                        if let Err(e) = runner_clone.run_file(&path, tx.clone()).await {
+                                                            let _ = tx.send(app::TestEvent::Error {
+                                                                message: format!("Runner error: {}", e),
+                                                            });
+                                                        }
+                                                    });
+                                                }
                                             }
                                             app::PendingRun::Test { file, name } => {
-                                                tokio::spawn(async move {
-                                                    if let Err(e) = runner.run_test(&file, &name, tx.clone()).await {
-                                                        let _ = tx.send(app::TestEvent::Error {
-                                                            message: format!("Runner error: {}", e),
-                                                        });
-                                                    }
-                                                });
+                                                if app.watch_mode {
+                                                    let handle = tokio::spawn(async move {
+                                                        if let Err(e) = runner_clone.run_test_watch(&file, &name, tx.clone()).await {
+                                                            let _ = tx.send(app::TestEvent::Error {
+                                                                message: format!("Watch error: {}", e),
+                                                            });
+                                                        }
+                                                        let _ = tx.send(app::TestEvent::WatchStopped);
+                                                    });
+                                                    app.watch_handle = Some(handle);
+                                                } else {
+                                                    tokio::spawn(async move {
+                                                        if let Err(e) = runner_clone.run_test(&file, &name, tx.clone()).await {
+                                                            let _ = tx.send(app::TestEvent::Error {
+                                                                message: format!("Runner error: {}", e),
+                                                            });
+                                                        }
+                                                    });
+                                                }
                                             }
                                         }
                                     }

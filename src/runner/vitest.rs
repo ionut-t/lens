@@ -74,29 +74,6 @@ fn open_log_file() -> Option<LogFile> {
     })
 }
 
-/// Commands sent to the vitest watch process via stdin using the LENS_RUN protocol.
-enum WatchRunCommand<'a> {
-    All,
-    File { file: &'a str },
-    Test { file: &'a str, name: &'a str },
-}
-
-impl WatchRunCommand<'_> {
-    fn to_stdin_line(&self) -> String {
-        let json = match self {
-            WatchRunCommand::All => r#"{"type":"run-all"}"#.to_string(),
-            WatchRunCommand::File { file } => format!(r#"{{"type":"run-file","file":"{}"}}"#, file),
-            WatchRunCommand::Test { file, name } => {
-                format!(
-                    r#"{{"type":"run-test","file":"{}","name":"{}"}}"#,
-                    file, name
-                )
-            }
-        };
-        format!("LENS_RUN:{}\n", json)
-    }
-}
-
 fn write_log(lf: &LogFile, msg: &str) {
     use std::io::Write;
     if let Ok(mut f) = lf.lock() {
@@ -113,8 +90,6 @@ pub struct VitestRunner {
     /// Defaults to workspace, but can be narrowed to a single project.
     search_root: PathBuf,
     log_file: Option<LogFile>,
-    /// Channel to send commands to the stdin of the active watch process.
-    watch_stdin: std::sync::Arc<std::sync::Mutex<Option<mpsc::UnboundedSender<String>>>>,
     /// Compiled glob patterns for files to skip during discovery.
     ignore_patterns: Vec<glob::Pattern>,
 }
@@ -134,7 +109,6 @@ impl VitestRunner {
             workspace,
             search_root,
             log_file: open_log_file(),
-            watch_stdin: std::sync::Arc::new(std::sync::Mutex::new(None)),
             ignore_patterns,
         }
     }
@@ -290,31 +264,12 @@ impl VitestRunner {
             .spawn()
             .context("failed to spawn vitest")?;
 
-        let mut stdin = child.stdin.take().context("missing stdin")?;
+        // Drop the write end of stdin immediately — we never send commands to vitest.
+        // Keeping it as piped (vs null) preserves the pipe-based stdin mode that
+        // Node.js / the reporter expects (null stdin changes event-loop behaviour).
+        drop(child.stdin.take());
         let stdout = child.stdout.take().context("missing stdout")?;
         let stderr = child.stderr.take().context("missing stderr")?;
-
-        // Enable control over the watch process via the custom reporter.
-        if watch {
-            let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-            *self.watch_stdin.lock().unwrap() = Some(tx);
-
-            let log_file = self.log_file.clone();
-            let watch_stdin_clear = std::sync::Arc::clone(&self.watch_stdin);
-            tokio::spawn(async move {
-                use tokio::io::AsyncWriteExt;
-                while let Some(line) = rx.recv().await {
-                    if let Some(ref lf) = log_file {
-                        write_log(lf, &format!("[stdin] sending: {}", line.trim()));
-                    }
-                    if stdin.write_all(line.as_bytes()).await.is_err() {
-                        break;
-                    }
-                    let _ = stdin.flush().await;
-                }
-                *watch_stdin_clear.lock().unwrap() = None;
-            });
-        }
 
         // Wrap child in a guard that kills the process group on drop.
         // The child stays in the guard at all times so it is always killed if this
@@ -365,10 +320,6 @@ impl VitestRunner {
         // Keep the temp file alive until vitest exits
         drop(reporter_file);
 
-        if watch {
-            self.stop_watch();
-        }
-
         if !watch && let Some(ref mut child) = child_guard.child {
             let status = child.wait().await.context("failed to wait for vitest")?;
             if !status.success() {
@@ -379,20 +330,6 @@ impl VitestRunner {
         }
 
         Ok(())
-    }
-
-    /// Try to route `cmd` through the active watch process stdin.
-    /// Returns true if the command was sent, false if no watch process is running.
-    fn try_run_via_watch(&self, cmd: WatchRunCommand<'_>) -> bool {
-        let mut guard = self.watch_stdin.lock().unwrap();
-        if let Some(tx) = guard.as_ref() {
-            if tx.send(cmd.to_stdin_line()).is_ok() {
-                return true;
-            }
-            // Sender broken — clear the stale entry
-            *guard = None;
-        }
-        false
     }
 
     fn find_config_for_file(&self, file: &Path) -> Option<PathBuf> {
@@ -433,10 +370,6 @@ impl TestRunner for VitestRunner {
     }
 
     async fn run_all(&self, tx: mpsc::UnboundedSender<TestEvent>) -> Result<()> {
-        if self.try_run_via_watch(WatchRunCommand::All) {
-            return Ok(());
-        }
-
         let configs = self.find_vitest_configs();
         if configs.is_empty() {
             // No configs found, run vitest from workspace root (non-Nx)
@@ -459,10 +392,6 @@ impl TestRunner for VitestRunner {
 
     async fn run_file(&self, file: &Path, tx: mpsc::UnboundedSender<TestEvent>) -> Result<()> {
         let file_abs = file.to_string_lossy().to_string();
-        if self.try_run_via_watch(WatchRunCommand::File { file: &file_abs }) {
-            return Ok(());
-        }
-
         if let Some(config) = self.find_config_for_file(file) {
             let reporter_file = self.write_reporter()?;
             let reporter_path = reporter_file.path().to_string_lossy().to_string();
@@ -487,13 +416,6 @@ impl TestRunner for VitestRunner {
         tx: mpsc::UnboundedSender<TestEvent>,
     ) -> Result<()> {
         let file_abs = file.to_string_lossy().to_string();
-        if self.try_run_via_watch(WatchRunCommand::Test {
-            file: &file_abs,
-            name: test_name,
-        }) {
-            return Ok(());
-        }
-
         if let Some(config) = self.find_config_for_file(file) {
             let reporter_file = self.write_reporter()?;
             let reporter_path = reporter_file.path().to_string_lossy().to_string();
@@ -517,6 +439,59 @@ impl TestRunner for VitestRunner {
         }
     }
 
+    async fn run_file_watch(
+        &self,
+        file: &Path,
+        tx: mpsc::UnboundedSender<TestEvent>,
+    ) -> Result<()> {
+        let file_abs = file.to_string_lossy().to_string();
+        if let Some(config) = self.find_config_for_file(file) {
+            let reporter_file = self.write_reporter()?;
+            let reporter_path = reporter_file.path().to_string_lossy().to_string();
+            let workspace_config = self.write_workspace_config(&[config], &reporter_path)?;
+            let ws_path = workspace_config.path().to_path_buf();
+            let result = self
+                .spawn_and_stream(&[&file_abs], tx, true, Some(&ws_path), None)
+                .await;
+            drop(workspace_config);
+            drop(reporter_file);
+            result
+        } else {
+            self.spawn_and_stream(&[&file_abs], tx, true, None, None)
+                .await
+        }
+    }
+
+    async fn run_test_watch(
+        &self,
+        file: &Path,
+        test_name: &str,
+        tx: mpsc::UnboundedSender<TestEvent>,
+    ) -> Result<()> {
+        let file_abs = file.to_string_lossy().to_string();
+        if let Some(config) = self.find_config_for_file(file) {
+            let reporter_file = self.write_reporter()?;
+            let reporter_path = reporter_file.path().to_string_lossy().to_string();
+            let workspace_config = self.write_workspace_config(&[config], &reporter_path)?;
+            let ws_path = workspace_config.path().to_path_buf();
+            let result = self
+                .spawn_and_stream(
+                    &[&file_abs, "-t", test_name],
+                    tx,
+                    true,
+                    Some(&ws_path),
+                    None,
+                )
+                .await;
+            drop(workspace_config);
+            drop(reporter_file);
+            result
+        } else {
+            self.spawn_and_stream(&[&file_abs, "-t", test_name], tx, true, None, None)
+                .await
+        }
+    }
+
     async fn run_all_watch(&self, tx: mpsc::UnboundedSender<TestEvent>) -> Result<()> {
         let configs = self.find_vitest_configs();
         if configs.is_empty() {
@@ -535,10 +510,6 @@ impl TestRunner for VitestRunner {
             drop(reporter_file);
             result
         }
-    }
-
-    fn stop_watch(&self) {
-        *self.watch_stdin.lock().unwrap() = None;
     }
 
     fn name(&self) -> &str {
