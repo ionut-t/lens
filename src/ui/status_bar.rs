@@ -1,10 +1,7 @@
 use ratatui::{prelude::*, widgets::Paragraph};
 
 use super::theme;
-use crate::{
-    app::App,
-    models::{NodeKind, RunSummary},
-};
+use crate::{app::App, models::NodeKind};
 
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -152,12 +149,7 @@ fn get_summary(app: &App) -> Line<'_> {
         Line::from(spans)
     } else if !app.discovering {
         if let Some(summary) = &app.summary {
-            let RunSummary {
-                passed,
-                failed,
-                skipped,
-                ..
-            } = summary;
+            let (passed, failed, skipped) = app.tree.count_tests_by_status();
 
             if passed + failed + skipped > 0 {
                 let mut spans = counts;

@@ -214,6 +214,22 @@ impl TestTree {
         self.nodes.iter().filter(|n| n.kind == kind).count()
     }
 
+    /// Count test nodes by terminal status. Returns (passed, failed, skipped).
+    pub fn count_tests_by_status(&self) -> (usize, usize, usize) {
+        let (mut passed, mut failed, mut skipped) = (0, 0, 0);
+        for node in &self.nodes {
+            if node.kind == NodeKind::Test {
+                match node.status {
+                    TestStatus::Passed => passed += 1,
+                    TestStatus::Failed => failed += 1,
+                    TestStatus::Skipped => skipped += 1,
+                    _ => {}
+                }
+            }
+        }
+        (passed, failed, skipped)
+    }
+
     /// Collect all node ids with Failed status.
     pub fn failed_nodes(&self) -> Vec<usize> {
         self.nodes

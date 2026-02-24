@@ -218,7 +218,7 @@ export default class LensReporter {
         const r = test.result();
         if (r.state === "passed") passed += 1;
         else if (r.state === "failed") failed += 1;
-        else if (r.state === "skipped") skipped += 1;
+        else skipped += 1;
       }
     }
 
