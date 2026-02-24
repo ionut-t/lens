@@ -49,8 +49,16 @@ pub trait TestRunner: Send + Sync {
 }
 
 /// Detect and construct the appropriate runner for the given workspace.
-pub fn detect(workspace: PathBuf, project_root: Option<PathBuf>) -> Arc<dyn TestRunner> {
-    Arc::new(vitest::VitestRunner::new(workspace, project_root))
+pub fn detect(
+    workspace: PathBuf,
+    project_root: Option<PathBuf>,
+    ignore_patterns: Vec<String>,
+) -> Arc<dyn TestRunner> {
+    Arc::new(vitest::VitestRunner::new(
+        workspace,
+        project_root,
+        ignore_patterns,
+    ))
 }
 
 /// Resolve an Nx project name to its root directory (relative to workspace).

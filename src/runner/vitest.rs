@@ -12,6 +12,17 @@ use crate::models::{FailureDetail, RunSummary, TestResult, TestStatus};
 
 use super::{DiscoveredFile, TestRunner};
 
+const SUFFIXES: [&str; 8] = [
+    "*.test.ts",
+    "*.test.tsx",
+    "*.test.js",
+    "*.test.jsx",
+    "*.spec.ts",
+    "*.spec.tsx",
+    "*.spec.js",
+    "*.spec.jsx",
+];
+
 /// Guard that kills the child process (and its entire process group) on drop.
 struct ChildGuard {
     child: Option<tokio::process::Child>,
@@ -104,16 +115,27 @@ pub struct VitestRunner {
     log_file: Option<LogFile>,
     /// Channel to send commands to the stdin of the active watch process.
     watch_stdin: std::sync::Arc<std::sync::Mutex<Option<mpsc::UnboundedSender<String>>>>,
+    /// Compiled glob patterns for files to skip during discovery.
+    ignore_patterns: Vec<glob::Pattern>,
 }
 
 impl VitestRunner {
-    pub fn new(workspace: PathBuf, project_root: Option<PathBuf>) -> Self {
+    pub fn new(
+        workspace: PathBuf,
+        project_root: Option<PathBuf>,
+        ignore_patterns: Vec<String>,
+    ) -> Self {
         let search_root = project_root.unwrap_or_else(|| workspace.clone());
+        let ignore_patterns = ignore_patterns
+            .iter()
+            .filter_map(|p| glob::Pattern::new(p).ok())
+            .collect();
         Self {
             workspace,
             search_root,
             log_file: open_log_file(),
             watch_stdin: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            ignore_patterns,
         }
     }
 
@@ -387,30 +409,23 @@ impl VitestRunner {
 #[async_trait]
 impl TestRunner for VitestRunner {
     async fn discover(&self, workspace: &Path) -> Result<Vec<DiscoveredFile>> {
-        let suffixes = [
-            "*.test.ts",
-            "*.test.tsx",
-            "*.test.js",
-            "*.test.jsx",
-            "*.spec.ts",
-            "*.spec.tsx",
-            "*.spec.js",
-            "*.spec.jsx",
-        ];
-
         let mut files = Vec::new();
-        for suffix in &suffixes {
+        for suffix in &SUFFIXES {
             let pattern = workspace
                 .join("**/")
                 .join(suffix)
                 .to_string_lossy()
                 .to_string();
             for entry in glob::glob(&pattern)?.flatten() {
-                if !entry.to_string_lossy().contains("node_modules")
-                    && !files.iter().any(|f: &DiscoveredFile| f.path == entry)
+                let rel = entry.strip_prefix(&self.workspace).unwrap_or(&entry);
+                let rel_str = rel.to_string_lossy();
+                if entry.to_string_lossy().contains("node_modules")
+                    || files.iter().any(|f: &DiscoveredFile| f.path == entry)
+                    || self.ignore_patterns.iter().any(|p| p.matches(&rel_str))
                 {
-                    files.push(DiscoveredFile { path: entry });
+                    continue;
                 }
+                files.push(DiscoveredFile { path: entry });
             }
         }
 

@@ -8,17 +8,22 @@ use crossterm::{
 };
 use ratatui::prelude::*;
 
-/// Suspend the TUI, open `$EDITOR` at the given location, then restore the TUI.
+/// Suspend the TUI, open the editor at the given location, then restore the TUI.
+/// `command_override` takes priority over `$EDITOR`.
 pub fn open(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     path: PathBuf,
     line: Option<u32>,
     col: Option<u32>,
+    editor_cmd: Option<&str>,
 ) -> Result<()> {
     terminal::disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
 
-    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".into());
+    let editor = editor_cmd
+        .map(str::to_owned)
+        .or_else(|| std::env::var("EDITOR").ok())
+        .unwrap_or_else(|| "vim".into());
     let mut cmd = std::process::Command::new(&editor);
 
     build_args(&mut cmd, &editor, &path, line, col);
@@ -104,7 +109,7 @@ fn editor_kind(editor: &str) -> EditorKind {
 
     match bin {
         "hx" | "helix" => EditorKind::Helix,
-        "code" | "code-insiders" | "codium" => EditorKind::VSCode,
+        "code" | "code-insiders" | "codium" | "cursor" => EditorKind::VSCode,
         "webstorm" | "wstorm" => EditorKind::WebStorm,
         "zed" => EditorKind::Zed,
         _ => EditorKind::Vim,

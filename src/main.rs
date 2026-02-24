@@ -1,4 +1,5 @@
 mod app;
+mod config;
 mod editor;
 mod models;
 mod runner;
@@ -22,6 +23,8 @@ use tokio::time::{Duration, interval};
 use app::{Action, App, handle_action, handle_test_event, trigger_action};
 use runner::{TestRunner, resolve_nx_project};
 
+use crate::config::Config;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Setup terminal
@@ -42,12 +45,19 @@ async fn main() -> Result<()> {
 async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let project = std::env::args().nth(1);
+    let cfg = Config::load(&workspace);
 
     let (mut app, mut event_rx) = App::new(workspace.clone());
     app.project_name = project.clone();
     let mut tick = interval(Duration::from_millis(100));
     let mut test_runner: Option<Arc<dyn TestRunner>> = None;
-    let mut runner_rx = Some(start_runner(workspace, project, app.event_tx.clone()));
+    let mut runner_rx = Some(start_runner(
+        workspace,
+        project,
+        cfg.discovery.ignore,
+        app.event_tx.clone(),
+    ));
+    let editor_command = cfg.editor.command;
     let mut event_stream = EventStream::new();
 
     loop {
@@ -173,7 +183,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
         }
 
         if let Some((path, line, col)) = app.pending_editor.take()
-            && let Err(e) = editor::open(terminal, path, line, col)
+            && let Err(e) = editor::open(terminal, path, line, col, editor_command.as_deref())
         {
             app.notifier.error(e.to_string());
         }
@@ -190,6 +200,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
 fn start_runner(
     workspace: PathBuf,
     project: Option<String>,
+    ignore_patterns: Vec<String>,
     event_tx: mpsc::UnboundedSender<app::TestEvent>,
 ) -> tokio::sync::oneshot::Receiver<Arc<dyn TestRunner>> {
     let (runner_tx, runner_rx) = tokio::sync::oneshot::channel();
@@ -205,7 +216,7 @@ fn start_runner(
                 .ok()
                 .flatten();
                 if result.is_none() {
-                    let r: Arc<dyn TestRunner> = runner::detect(workspace, None);
+                    let r: Arc<dyn TestRunner> = runner::detect(workspace, None, ignore_patterns);
                     let _ = runner_tx.send(Arc::clone(&r));
                     let _ = event_tx.send(app::TestEvent::DiscoveryFailed {
                         message: format!("Nx project '{}' not found", name),
@@ -218,7 +229,8 @@ fn start_runner(
         };
 
         let discover_root = project_root.as_deref().unwrap_or(&workspace).to_path_buf();
-        let r: Arc<dyn TestRunner> = runner::detect(workspace.clone(), project_root);
+        let r: Arc<dyn TestRunner> =
+            runner::detect(workspace.clone(), project_root, ignore_patterns);
         let _ = runner_tx.send(Arc::clone(&r));
 
         match r.discover(&discover_root).await {
