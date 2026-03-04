@@ -80,7 +80,8 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
 
         TestEvent::FileStarted { path } => {
             let file_name = file_display_name(app, &path);
-            find_or_create_file_node(app, &file_name, &path);
+            let file_id = find_or_create_file_node(app, &file_name, &path);
+            app.tree.mark_children_stale(file_id);
         }
 
         TestEvent::TestStarted { file, name } => {
@@ -131,7 +132,12 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
             }
         }
 
-        TestEvent::FileFinished { path: _path } => {}
+        TestEvent::FileFinished { path } => {
+            let file_name = file_display_name(app, &path);
+            if let Some(file_id) = app.tree.find_root_by_name(&file_name) {
+                app.tree.purge_stale_children(file_id);
+            }
+        }
 
         TestEvent::RunFinished { mut summary } => {
             app.running = false;
@@ -216,6 +222,11 @@ fn find_or_create_test_node(app: &mut App, file_id: usize, full_name: &str) -> u
             parent_id = id;
         } else {
             parent_id = app.tree.add_child(parent_id, kind, part.to_string(), None);
+        }
+        // Clear stale on every node in the path (suites included), so they aren't
+        // purged by purge_stale_children when the file run finishes.
+        if let Some(node) = app.tree.get_mut(parent_id) {
+            node.stale = false;
         }
     }
 

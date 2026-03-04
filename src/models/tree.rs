@@ -27,6 +27,11 @@ pub struct TestNode {
     pub console_output: Vec<String>,
     /// Source location (line, column) for this test, if known.
     pub location: Option<(u32, u32)>,
+    /// Tombstoned nodes are children removed when a file re-ran with fewer tests.
+    pub deleted: bool,
+    /// Marked at FileStarted; cleared when the test reports a result. Still-stale nodes
+    /// are purged at FileFinished, meaning they no longer exist in the new run.
+    pub stale: bool,
 }
 
 #[derive(Debug, Default)]
@@ -81,6 +86,8 @@ impl TestTree {
             expanded,
             console_output: Vec::new(),
             location: None,
+            deleted: false,
+            stale: false,
         });
         id
     }
@@ -215,13 +222,16 @@ impl TestTree {
 
     /// Count nodes by kind.
     pub fn count_kind(&self, kind: NodeKind) -> usize {
-        self.nodes.iter().filter(|n| n.kind == kind).count()
+        self.nodes
+            .iter()
+            .filter(|n| !n.deleted && n.kind == kind)
+            .count()
     }
 
     /// Count test nodes by terminal status. Returns (passed, failed, skipped).
     pub fn count_tests_by_status(&self) -> (usize, usize, usize) {
         let (mut passed, mut failed, mut skipped) = (0, 0, 0);
-        for node in &self.nodes {
+        for node in self.nodes.iter().filter(|n| !n.deleted) {
             if node.kind == NodeKind::Test {
                 match node.status {
                     TestStatus::Passed => passed += 1,
@@ -238,9 +248,52 @@ impl TestTree {
     pub fn failed_nodes(&self) -> Vec<usize> {
         self.nodes
             .iter()
-            .filter(|n| n.kind == NodeKind::Test && n.status == TestStatus::Failed)
+            .filter(|n| !n.deleted && n.kind == NodeKind::Test && n.status == TestStatus::Failed)
             .map(|n| n.id)
             .collect()
+    }
+
+    /// Mark all descendants of a file node as stale at the start of a file run.
+    /// Stale nodes remain visible with their current status until `purge_stale_children` is called.
+    pub fn mark_children_stale(&mut self, id: usize) {
+        let children = self.nodes[id].children.clone();
+        for child_id in children {
+            self.mark_stale_recursive(child_id);
+        }
+    }
+
+    fn mark_stale_recursive(&mut self, id: usize) {
+        self.nodes[id].stale = true;
+        let children = self.nodes[id].children.clone();
+        for child_id in children {
+            self.mark_stale_recursive(child_id);
+        }
+    }
+
+    /// Remove any descendants still marked stale after a file run completes.
+    /// These are tests/suites that no longer exist in the file.
+    pub fn purge_stale_children(&mut self, id: usize) {
+        let children = self.nodes[id].children.clone();
+        let (keep, purge): (Vec<usize>, Vec<usize>) =
+            children.into_iter().partition(|&c| !self.nodes[c].stale);
+        self.nodes[id].children = keep;
+        for child_id in purge {
+            self.delete_subtree(child_id);
+        }
+        // Recurse into kept children to clean up stale grandchildren
+        let kept = self.nodes[id].children.clone();
+        for child_id in kept {
+            self.purge_stale_children(child_id);
+        }
+    }
+
+    /// Mark a node and its entire subtree as deleted.
+    fn delete_subtree(&mut self, id: usize) {
+        self.nodes[id].deleted = true;
+        let children = self.nodes[id].children.clone();
+        for child_id in children {
+            self.delete_subtree(child_id);
+        }
     }
 
     /// Reset all nodes to Pending (for re-run).
