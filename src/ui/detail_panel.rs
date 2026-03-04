@@ -229,6 +229,122 @@ fn collect_failed_descendants(tree: &crate::models::TestTree, node_id: usize) ->
     result
 }
 
+/// Render a JSON object, comparing each key against `counterpart_map` to highlight diffs.
+fn push_json_object_lines<'a>(
+    lines: &mut Vec<Line<'a>>,
+    map: &serde_json::Map<String, serde_json::Value>,
+    counterpart_map: Option<&serde_json::Map<String, serde_json::Value>>,
+    base_color: ratatui::prelude::Color,
+    highlight_color: ratatui::prelude::Color,
+    indent: &str,
+) {
+    lines.push(Line::from(Span::styled(
+        format!("{indent}{{"),
+        Style::default().fg(base_color),
+    )));
+    let mut sorted_keys: Vec<&String> = map.keys().collect();
+    sorted_keys.sort();
+    for key in sorted_keys {
+        let value = &map[key];
+        let counterpart = counterpart_map.and_then(|m| m.get(key));
+        let key_prefix = format!("{indent}  \"{key}\": ");
+        push_json_value_lines(
+            lines,
+            value,
+            counterpart,
+            &key_prefix,
+            indent,
+            base_color,
+            highlight_color,
+        );
+    }
+    lines.push(Line::from(Span::styled(
+        format!("{indent}}}"),
+        Style::default().fg(base_color),
+    )));
+}
+
+/// Render a JSON value, drilling into objects/arrays to highlight only the differing leaves.
+fn push_json_value_lines<'a>(
+    lines: &mut Vec<Line<'a>>,
+    value: &serde_json::Value,
+    counterpart: Option<&serde_json::Value>,
+    key_prefix: &str,
+    indent: &str,
+    base_color: ratatui::prelude::Color,
+    highlight_color: ratatui::prelude::Color,
+) {
+    let deeper = format!("{indent}  ");
+    match value {
+        serde_json::Value::Object(map) => {
+            let cp_map = counterpart.and_then(|c| c.as_object());
+            lines.push(Line::from(Span::styled(
+                format!("{key_prefix}{{"),
+                Style::default().fg(base_color),
+            )));
+            let mut sorted_keys: Vec<&String> = map.keys().collect();
+            sorted_keys.sort();
+            for k in sorted_keys {
+                let child_cp = cp_map.and_then(|m| m.get(k));
+                let child_prefix = format!("{deeper}  \"{k}\": ");
+                push_json_value_lines(
+                    lines,
+                    &map[k],
+                    child_cp,
+                    &child_prefix,
+                    &deeper,
+                    base_color,
+                    highlight_color,
+                );
+            }
+            lines.push(Line::from(Span::styled(
+                format!("{deeper}}}"),
+                Style::default().fg(base_color),
+            )));
+        }
+        serde_json::Value::Array(arr) => {
+            let cp_arr = counterpart.and_then(|c| c.as_array());
+            lines.push(Line::from(Span::styled(
+                format!("{key_prefix}["),
+                Style::default().fg(base_color),
+            )));
+            for (i, item) in arr.iter().enumerate() {
+                let item_cp = cp_arr.and_then(|a| a.get(i));
+                let item_prefix = format!("{deeper}  ");
+                push_json_value_lines(
+                    lines,
+                    item,
+                    item_cp,
+                    &item_prefix,
+                    &deeper,
+                    base_color,
+                    highlight_color,
+                );
+            }
+            lines.push(Line::from(Span::styled(
+                format!("{deeper}]"),
+                Style::default().fg(base_color),
+            )));
+        }
+        serde_json::Value::String(s) => {
+            let differs = counterpart != Some(value);
+            let color = if differs { highlight_color } else { base_color };
+            lines.push(Line::from(Span::styled(
+                format!("{key_prefix}\"{}\"", s),
+                Style::default().fg(color),
+            )));
+        }
+        other => {
+            let differs = counterpart != Some(value);
+            let color = if differs { highlight_color } else { base_color };
+            lines.push(Line::from(Span::styled(
+                format!("{key_prefix}{other}"),
+                Style::default().fg(color),
+            )));
+        }
+    }
+}
+
 fn build_failure_text<'a>(
     failure: &'a crate::models::FailureDetail,
     test_name: &'a str,
@@ -247,17 +363,48 @@ fn build_failure_text<'a>(
     ];
 
     // Expected / Actual
-    if let Some(ref expected) = failure.expected {
-        lines.push(Line::from(vec![
-            Span::styled("  Expected: ", Style::default().fg(theme::GREEN)),
-            Span::styled(expected.as_str(), Style::default().fg(theme::GREEN)),
-        ]));
-    }
-    if let Some(ref actual) = failure.actual {
-        lines.push(Line::from(vec![
-            Span::styled("  Actual:   ", Style::default().fg(theme::RED)),
-            Span::styled(actual.as_str(), Style::default().fg(theme::RED).bold()),
-        ]));
+    match (&failure.expected_parsed, &failure.actual_parsed) {
+        (Some(exp_map), Some(act_map)) => {
+            lines.push(Line::from(Span::styled(
+                "  Expected:",
+                Style::default().fg(theme::GREEN),
+            )));
+            push_json_object_lines(
+                &mut lines,
+                exp_map,
+                Some(act_map),
+                theme::GREEN,
+                theme::YELLOW,
+                "  ",
+            );
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "  Actual:",
+                Style::default().fg(theme::RED),
+            )));
+            push_json_object_lines(
+                &mut lines,
+                act_map,
+                Some(exp_map),
+                theme::RED,
+                theme::YELLOW,
+                "  ",
+            );
+        }
+        _ => {
+            if let Some(expected) = failure.expected.as_deref() {
+                lines.push(Line::from(vec![
+                    Span::styled("  Expected: ", Style::default().fg(theme::GREEN)),
+                    Span::styled(expected, Style::default().fg(theme::GREEN)),
+                ]));
+            }
+            if let Some(actual) = failure.actual.as_deref() {
+                lines.push(Line::from(vec![
+                    Span::styled("  Actual:   ", Style::default().fg(theme::RED)),
+                    Span::styled(actual, Style::default().fg(theme::RED).bold()),
+                ]));
+            }
+        }
     }
 
     // Diff (only show if we don't already have expected/actual)

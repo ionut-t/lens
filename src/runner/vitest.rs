@@ -12,6 +12,58 @@ use crate::models::{FailureDetail, RunSummary, TestResult, TestStatus};
 
 use super::{DiscoveredFile, TestRunner};
 
+/// Parse Vitest's Node.js inspect format into a JSON map.
+///
+/// Vitest serializes values using Node's `util.inspect`, which produces output like:
+///   `Object { "key": value, "nested": Object { ... }, "arr": Array [ ... ], }`
+///
+/// This is not valid JSON, so we normalize it first:
+///   1. Replace `Object {` → `{` and `Array [` → `[`
+///   2. Remove trailing commas before `}` and `]`
+fn parse_object_string(s: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let s = s.trim();
+    // Fast path: already valid JSON
+    if let Ok(serde_json::Value::Object(m)) = serde_json::from_str(s) {
+        return Some(m);
+    }
+    if !s.contains("Object {") {
+        return None;
+    }
+    let normalized = normalize_inspect_format(s);
+    match serde_json::from_str(&normalized) {
+        Ok(serde_json::Value::Object(m)) => Some(m),
+        _ => None,
+    }
+}
+
+/// Convert Node.js inspect format to valid JSON.
+fn normalize_inspect_format(s: &str) -> String {
+    let s = s.replace("Object {", "{").replace("Array [", "[");
+    remove_trailing_commas(&s)
+}
+
+/// Remove commas that appear immediately before a `}` or `]` (ignoring whitespace).
+fn remove_trailing_commas(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut result = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == ',' {
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].is_whitespace() {
+                j += 1;
+            }
+            if j < chars.len() && (chars[j] == '}' || chars[j] == ']') {
+                i += 1;
+                continue;
+            }
+        }
+        result.push(chars[i]);
+        i += 1;
+    }
+    result
+}
+
 const SUFFIXES: [&str; 8] = [
     "*.test.ts",
     "*.test.tsx",
@@ -604,13 +656,21 @@ impl VitestEvent {
                 };
 
                 let failure = if status == TestStatus::Failed {
-                    error.map(|e| FailureDetail {
-                        message: strip_ansi(&e.message.unwrap_or_default()),
-                        expected: e.expected.map(|s| strip_ansi(&s)),
-                        actual: e.actual.map(|s| strip_ansi(&s)),
-                        diff: e.diff.map(|s| strip_ansi(&s)),
-                        source_snippet: None,
-                        stack_trace: e.stack.map(|s| strip_ansi(&s)),
+                    error.map(|e| {
+                        let expected = e.expected.map(|s| strip_ansi(&s));
+                        let actual = e.actual.map(|s| strip_ansi(&s));
+                        let expected_parsed = expected.as_deref().and_then(parse_object_string);
+                        let actual_parsed = actual.as_deref().and_then(parse_object_string);
+                        FailureDetail {
+                            message: strip_ansi(&e.message.unwrap_or_default()),
+                            expected,
+                            actual,
+                            expected_parsed,
+                            actual_parsed,
+                            diff: e.diff.map(|s| strip_ansi(&s)),
+                            source_snippet: None,
+                            stack_trace: e.stack.map(|s| strip_ansi(&s)),
+                        }
                     })
                 } else {
                     None
