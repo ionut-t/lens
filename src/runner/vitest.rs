@@ -12,58 +12,6 @@ use crate::models::{FailureDetail, RunSummary, TestResult, TestStatus};
 
 use super::{DiscoveredFile, TestRunner};
 
-/// Parse Vitest's Node.js inspect format into a JSON map.
-///
-/// Vitest serializes values using Node's `util.inspect`, which produces output like:
-///   `Object { "key": value, "nested": Object { ... }, "arr": Array [ ... ], }`
-///
-/// This is not valid JSON, so we normalize it first:
-///   1. Replace `Object {` → `{` and `Array [` → `[`
-///   2. Remove trailing commas before `}` and `]`
-fn parse_object_string(s: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
-    let s = s.trim();
-    // Fast path: already valid JSON
-    if let Ok(serde_json::Value::Object(m)) = serde_json::from_str(s) {
-        return Some(m);
-    }
-    if !s.contains("Object {") {
-        return None;
-    }
-    let normalized = normalize_inspect_format(s);
-    match serde_json::from_str(&normalized) {
-        Ok(serde_json::Value::Object(m)) => Some(m),
-        _ => None,
-    }
-}
-
-/// Convert Node.js inspect format to valid JSON.
-fn normalize_inspect_format(s: &str) -> String {
-    let s = s.replace("Object {", "{").replace("Array [", "[");
-    remove_trailing_commas(&s)
-}
-
-/// Remove commas that appear immediately before a `}` or `]` (ignoring whitespace).
-fn remove_trailing_commas(s: &str) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    let mut result = String::with_capacity(s.len());
-    let mut i = 0;
-    while i < chars.len() {
-        if chars[i] == ',' {
-            let mut j = i + 1;
-            while j < chars.len() && chars[j].is_whitespace() {
-                j += 1;
-            }
-            if j < chars.len() && (chars[j] == '}' || chars[j] == ']') {
-                i += 1;
-                continue;
-            }
-        }
-        result.push(chars[i]);
-        i += 1;
-    }
-    result
-}
-
 const SUFFIXES: [&str; 8] = [
     "*.test.ts",
     "*.test.tsx",
@@ -736,4 +684,104 @@ fn strip_ansi(s: &str) -> String {
         }
     }
     out
+}
+
+/// Parse Vitest's Node.js inspect format into a JSON map.
+///
+/// Vitest serializes values using Node's `util.inspect`, which produces output like:
+///   `Object { "key": value, "nested": Object { ... }, "arr": Array [ ... ], }`
+///
+/// This is not valid JSON, so we normalize it first:
+///   1. Replace `Object {` → `{` and `Array [` → `[`
+///   2. Remove trailing commas before `}` and `]`
+fn parse_object_string(s: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let s = s.trim();
+    // Fast path: already valid JSON
+    if let Ok(serde_json::Value::Object(m)) = serde_json::from_str(s) {
+        return Some(m);
+    }
+    if !s.contains("Object {") {
+        return None;
+    }
+    let normalized = normalize_inspect_format(s);
+    match serde_json::from_str(&normalized) {
+        Ok(serde_json::Value::Object(m)) => Some(m),
+        _ => None,
+    }
+}
+
+/// Convert Node.js inspect format to valid JSON.
+fn normalize_inspect_format(s: &str) -> String {
+    // Replace JS-specific tokens that are not valid JSON.
+    // `undefined` has no JSON equivalent — encode it as a sentinel string so it
+    // round-trips through serde_json and can be rendered as `undefined` in the UI.
+    let s = s
+        .replace("Object {", "{")
+        .replace("Array [", "[")
+        .replace(": undefined", ": \"__js_undefined__\"")
+        .replace(":undefined", ":\"__js_undefined__\"");
+    // Vitest's inspect format does not JSON-escape string contents, so bare
+    // backslashes inside values break serde_json parsing.
+    let s = fix_string_escapes(&s);
+    remove_trailing_commas(&s)
+}
+
+/// Scan through an almost-JSON string and escape bare backslashes inside quoted
+/// string values. Only touches characters inside `"..."` — structure is untouched.
+fn fix_string_escapes(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() + 16);
+    let mut chars = s.chars().peekable();
+    let mut in_string = false;
+
+    while let Some(c) = chars.next() {
+        if in_string {
+            match c {
+                '\\' => match chars.peek() {
+                    // Valid JSON escape sequences — pass both characters through
+                    Some(&'"' | &'\\' | &'/' | &'b' | &'f' | &'n' | &'r' | &'t' | &'u') => {
+                        result.push('\\');
+                        result.push(chars.next().unwrap());
+                    }
+                    // Bare backslash not starting a valid escape — double it
+                    _ => {
+                        result.push('\\');
+                        result.push('\\');
+                    }
+                },
+                '"' => {
+                    in_string = false;
+                    result.push('"');
+                }
+                other => result.push(other),
+            }
+        } else {
+            if c == '"' {
+                in_string = true;
+            }
+            result.push(c);
+        }
+    }
+    result
+}
+
+/// Remove commas that appear immediately before a `}` or `]` (ignoring whitespace).
+fn remove_trailing_commas(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut result = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == ',' {
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].is_whitespace() {
+                j += 1;
+            }
+            if j < chars.len() && (chars[j] == '}' || chars[j] == ']') {
+                i += 1;
+                continue;
+            }
+        }
+        result.push(chars[i]);
+        i += 1;
+    }
+    result
 }

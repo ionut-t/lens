@@ -329,8 +329,14 @@ fn push_json_value_lines<'a>(
         serde_json::Value::String(s) => {
             let differs = counterpart != Some(value);
             let color = if differs { highlight_color } else { base_color };
+            // Render JS `undefined` without quotes (it was encoded as a sentinel during parsing)
+            let rendered = if s == "__js_undefined__" {
+                format!("{key_prefix}undefined")
+            } else {
+                format!("{key_prefix}\"{}\"", s)
+            };
             lines.push(Line::from(Span::styled(
-                format!("{key_prefix}\"{}\"", s),
+                rendered,
                 Style::default().fg(color),
             )));
         }
