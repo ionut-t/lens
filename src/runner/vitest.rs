@@ -63,15 +63,17 @@ const REPORTER_SOURCE: &str = include_str!("../../reporters/vitest-reporter.mjs"
 type LogFile = std::sync::Arc<std::sync::Mutex<std::fs::File>>;
 
 fn open_log_file() -> Option<LogFile> {
-    std::env::var("LENS_DEBUG").ok().and_then(|path| {
-        std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(path)
-            .ok()
-            .map(|f| std::sync::Arc::new(std::sync::Mutex::new(f)))
-    })
+    let path = std::env::var("LENS_DEBUG").ok()?;
+    let f = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)
+        .map_err(|e| eprintln!("[lens] failed to open log file {path:?}: {e}"))
+        .ok()?;
+    let lf = std::sync::Arc::new(std::sync::Mutex::new(f));
+    write_log(&lf, "[lens] debug log started");
+    Some(lf)
 }
 
 fn write_log(lf: &LogFile, msg: &str) {
