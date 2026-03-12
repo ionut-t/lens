@@ -484,16 +484,22 @@ fn set_running_status(app: &mut App, node_id: usize) {
 }
 
 /// Extract line and column from the first frame of a stack trace.
-/// Matches patterns like `(file.ts:123:45)` or `file.ts:123:45`.
+/// Matches patterns like `(file.ts:123:45)` or `file.ts:123:45` or `file.ts:123`.
 fn parse_line_col_from_stack(stack: &str) -> Option<(Option<u32>, Option<u32>)> {
     for segment in stack.split_whitespace() {
         let s = segment.trim_matches(|c| c == '(' || c == ')');
         let parts: Vec<&str> = s.rsplitn(3, ':').collect();
-        if parts.len() >= 2 {
+
+        if parts.len() == 3 {
             let col = parts[0].parse::<u32>().ok();
             let line = parts[1].parse::<u32>().ok();
             if line.is_some() {
                 return Some((line, col));
+            }
+        } else if parts.len() == 2 {
+            let line = parts[0].parse::<u32>().ok();
+            if line.is_some() {
+                return Some((line, None));
             }
         }
     }
@@ -541,4 +547,65 @@ fn resolve_test_path(app: &App, node_id: usize) -> (PathBuf, String) {
         .unwrap_or_else(|| app.workspace.clone());
 
     (file_path, test_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_line_col_standard_frame() {
+        // Standard Node.js stack frame: file:line:col
+        let stack = "AssertionError: expected 1 to equal 2\n    at /project/src/foo.test.ts:42:5";
+        assert_eq!(parse_line_col_from_stack(stack), Some((Some(42), Some(5))));
+    }
+
+    #[test]
+    fn test_parse_line_col_parenthesised_frame() {
+        // Parenthesised form: at functionName (file:line:col)
+        let stack = "Error: fail\n    at Object.<anonymous> (/project/src/foo.test.ts:10:20)";
+        assert_eq!(parse_line_col_from_stack(stack), Some((Some(10), Some(20))));
+    }
+
+    #[test]
+    fn test_parse_line_col_no_column() {
+        // Only line, no column
+        let stack = "Error: fail\n    at /project/src/foo.test.ts:99";
+        assert_eq!(parse_line_col_from_stack(stack), Some((Some(99), None)));
+    }
+
+    #[test]
+    fn test_parse_line_col_picks_first_frame() {
+        // First frame is the test file; subsequent frames are node_modules
+        let stack = "AssertionError: fail\n    at /project/src/foo.test.ts:69:24\n    at file:///node_modules/@vitest/runner/dist/index.js:145:11";
+        assert_eq!(parse_line_col_from_stack(stack), Some((Some(69), Some(24))));
+    }
+
+    #[test]
+    fn test_parse_line_col_error_message_does_not_match() {
+        // Error message tokens like "id:" or "AssertionError:" must not produce a match
+        let stack = "AssertionError: expected { id: '1', title: undefined } to deeply equal { id: '1', title: 'Test' }\n    at /project/src/foo.test.ts:30:5";
+        assert_eq!(parse_line_col_from_stack(stack), Some((Some(30), Some(5))));
+    }
+
+    #[test]
+    fn test_parse_line_col_file_url_frame() {
+        // file:// URL form used by vitest for node_modules frames
+        let stack = "Error: fail\n    at /project/src/foo.test.ts:5:3\n    at file:///node_modules/vitest/dist/runner.js:1653:37";
+        assert_eq!(parse_line_col_from_stack(stack), Some((Some(5), Some(3))));
+    }
+
+    #[test]
+    fn test_parse_line_col_empty_stack() {
+        assert_eq!(parse_line_col_from_stack(""), None);
+    }
+
+    #[test]
+    fn test_parse_line_col_no_frames() {
+        // Error message only, no stack frames
+        assert_eq!(
+            parse_line_col_from_stack("Error: something went wrong"),
+            None
+        );
+    }
 }
