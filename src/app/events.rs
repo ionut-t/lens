@@ -22,7 +22,7 @@ pub enum TestEvent {
     TestFinished {
         file: String,
         name: String,
-        result: TestResult,
+        result: Box<TestResult>,
         location: Option<(u32, u32)>,
     },
     FileFinished {
@@ -110,7 +110,7 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
                     .get(test_id)
                     .is_some_and(|n| n.status.is_terminal());
             if !dominated {
-                app.tree.update_result(test_id, result);
+                app.tree.update_result(test_id, *result);
             }
             if let Some(loc) = location
                 && let Some(node) = app.tree.get_mut(test_id)

@@ -629,11 +629,11 @@ impl VitestEvent {
                 Some(TestEvent::TestFinished {
                     file,
                     name,
-                    result: TestResult {
+                    result: Box::new(TestResult {
                         status,
                         duration_ms: duration.map(|d| d as u64),
                         failure,
-                    },
+                    }),
                     location: location.map(|l| (l.line, l.column)),
                 })
             }
