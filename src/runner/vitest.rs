@@ -609,8 +609,8 @@ impl VitestEvent {
                     error.map(|e| {
                         let expected = e.expected.map(|s| strip_ansi(&s));
                         let actual = e.actual.map(|s| strip_ansi(&s));
-                        let expected_parsed = expected.as_deref().and_then(parse_object_string);
-                        let actual_parsed = actual.as_deref().and_then(parse_object_string);
+                        let expected_parsed = expected.as_deref().and_then(parse_value_string);
+                        let actual_parsed = actual.as_deref().and_then(parse_value_string);
                         FailureDetail {
                             message: strip_ansi(&e.message.unwrap_or_default()),
                             expected,
@@ -688,26 +688,31 @@ fn strip_ansi(s: &str) -> String {
     out
 }
 
-/// Parse Vitest's Node.js inspect format into a JSON map.
+/// Parse Vitest's Node.js inspect format into a JSON object or array value.
 ///
 /// Vitest serializes values using Node's `util.inspect`, which produces output like:
 ///   `Object { "key": value, "nested": Object { ... }, "arr": Array [ ... ], }`
+///   `Array [ 1, 2, 3, ]`
 ///
 /// This is not valid JSON, so we normalize it first:
 ///   1. Replace `Object {` → `{` and `Array [` → `[`
 ///   2. Remove trailing commas before `}` and `]`
-fn parse_object_string(s: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
+///
+/// Returns `Some(Value::Object(...))` or `Some(Value::Array(...))` on success.
+fn parse_value_string(s: &str) -> Option<serde_json::Value> {
     let s = s.trim();
-    // Fast path: already valid JSON
-    if let Ok(serde_json::Value::Object(m)) = serde_json::from_str(s) {
-        return Some(m);
+    // Fast path: already valid JSON object or array
+    if let Ok(v @ (serde_json::Value::Object(_) | serde_json::Value::Array(_))) =
+        serde_json::from_str(s)
+    {
+        return Some(v);
     }
-    if !s.contains("Object {") {
+    if !s.contains("Object {") && !s.contains("Array [") {
         return None;
     }
     let normalized = normalize_inspect_format(s);
     match serde_json::from_str(&normalized) {
-        Ok(serde_json::Value::Object(m)) => Some(m),
+        Ok(v @ (serde_json::Value::Object(_) | serde_json::Value::Array(_))) => Some(v),
         _ => None,
     }
 }
@@ -718,10 +723,20 @@ fn normalize_inspect_format(s: &str) -> String {
     // `undefined` has no JSON equivalent — encode it as a sentinel string so it
     // round-trips through serde_json and can be rendered as `undefined` in the UI.
     let s = s
+        // Vitest truncates deeply nested values to `[Object]` / `[Array]` when
+        // the depth exceeds its serialisation limit.  Encode them as sentinel
+        // strings so the renderer can display a clear truncation marker.
+        .replace("[Object]", "\"__truncated_object__\"")
+        .replace("[Array]", "\"__truncated_array__\"")
         .replace("Object {", "{")
         .replace("Array [", "[")
+        // Object value: `"key": undefined`
         .replace(": undefined", ": \"__js_undefined__\"")
-        .replace(":undefined", ":\"__js_undefined__\"");
+        .replace(":undefined", ":\"__js_undefined__\"")
+        // Array element: `[undefined` or `, undefined`
+        .replace("[undefined", "[\"__js_undefined__\"")
+        .replace("[ undefined", "[ \"__js_undefined__\"")
+        .replace(", undefined", ", \"__js_undefined__\"");
     // Vitest's inspect format does not JSON-escape string contents, so bare
     // backslashes inside values break serde_json parsing.
     let s = fix_string_escapes(&s);
@@ -786,4 +801,206 @@ fn remove_trailing_commas(s: &str) -> String {
         i += 1;
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── parse_value_string ──────────────────────────────────────────────────
+
+    #[test]
+    fn parse_value_string_plain_json_object() {
+        let result = parse_value_string(r#"{"a": 1, "b": "hello"}"#).unwrap();
+        assert_eq!(result, json!({"a": 1, "b": "hello"}));
+    }
+
+    #[test]
+    fn parse_value_string_plain_json_array() {
+        let result = parse_value_string(r#"[1, 2, 3]"#).unwrap();
+        assert_eq!(result, json!([1, 2, 3]));
+    }
+
+    #[test]
+    fn parse_value_string_inspect_object() {
+        let result = parse_value_string(r#"Object { "x": 1, "y": "hello", }"#).unwrap();
+        assert_eq!(result, json!({"x": 1, "y": "hello"}));
+    }
+
+    #[test]
+    fn parse_value_string_inspect_array() {
+        let result = parse_value_string(r#"Array [ 1, 2, 3, ]"#).unwrap();
+        assert_eq!(result, json!([1, 2, 3]));
+    }
+
+    #[test]
+    fn parse_value_string_inspect_array_of_strings() {
+        let result = parse_value_string(r#"Array [ "a", "b", "c", ]"#).unwrap();
+        assert_eq!(result, json!(["a", "b", "c"]));
+    }
+
+    #[test]
+    fn parse_value_string_inspect_array_with_undefined() {
+        let result = parse_value_string(r#"Array [ 1, undefined, 3, ]"#).unwrap();
+        assert_eq!(result, json!([1, "__js_undefined__", 3]));
+    }
+
+    #[test]
+    fn parse_value_string_inspect_array_of_objects() {
+        let result =
+            parse_value_string(r#"Array [ Object { "id": 1, }, Object { "id": 2, }, ]"#).unwrap();
+        assert_eq!(result, json!([{"id": 1}, {"id": 2}]));
+    }
+
+    #[test]
+    fn parse_value_string_object_containing_array() {
+        let result = parse_value_string(r#"Object { "items": Array [ 1, 2, ], }"#).unwrap();
+        assert_eq!(result, json!({"items": [1, 2]}));
+    }
+
+    #[test]
+    fn parse_value_string_inspect_object_with_undefined() {
+        let result = parse_value_string(r#"Object { "x": undefined, }"#).unwrap();
+        assert_eq!(result, json!({"x": "__js_undefined__"}));
+    }
+
+    #[test]
+    fn parse_value_string_returns_none_for_primitive() {
+        assert!(parse_value_string("42").is_none());
+        assert!(parse_value_string("\"hello\"").is_none());
+        assert!(parse_value_string("true").is_none());
+        assert!(parse_value_string("null").is_none());
+    }
+
+    #[test]
+    fn parse_value_string_returns_none_for_garbage() {
+        assert!(parse_value_string("not json at all").is_none());
+        assert!(parse_value_string("").is_none());
+    }
+
+    #[test]
+    fn parse_value_string_trims_whitespace() {
+        let result = parse_value_string("  [1, 2]  ").unwrap();
+        assert_eq!(result, json!([1, 2]));
+    }
+
+    // ── normalize_inspect_format ────────────────────────────────────────────
+
+    #[test]
+    fn normalize_replaces_object_token() {
+        let out = normalize_inspect_format(r#"Object { "a": 1 }"#);
+        assert_eq!(out, r#"{ "a": 1 }"#);
+    }
+
+    #[test]
+    fn normalize_replaces_array_token() {
+        let out = normalize_inspect_format("Array [ 1, 2 ]");
+        assert_eq!(out, "[ 1, 2 ]");
+    }
+
+    #[test]
+    fn normalize_replaces_both_tokens() {
+        let out = normalize_inspect_format(r#"Object { "arr": Array [ 1, 2, ] }"#);
+        assert_eq!(out, r#"{ "arr": [ 1, 2 ] }"#);
+    }
+
+    #[test]
+    fn normalize_replaces_truncated_object_placeholder() {
+        let out = normalize_inspect_format(r#"Object { "nested": [Object], }"#);
+        assert_eq!(out, r#"{ "nested": "__truncated_object__" }"#);
+    }
+
+    #[test]
+    fn normalize_replaces_truncated_array_placeholder() {
+        let out = normalize_inspect_format(r#"Object { "items": [Array], }"#);
+        assert_eq!(out, r#"{ "items": "__truncated_array__" }"#);
+    }
+
+    #[test]
+    fn parse_value_string_truncated_object_placeholder() {
+        // Vitest emits [Object] for deeply nested values beyond its depth limit.
+        let input = r#"Array [
+  Object {
+    "a": 1,
+    "deep": [Object],
+  },
+]"#;
+        let result = parse_value_string(input).unwrap();
+        assert_eq!(result, json!([{"a": 1, "deep": "__truncated_object__"}]));
+    }
+
+    #[test]
+    fn parse_value_string_truncated_array_placeholder() {
+        let input = r#"Object { "items": [Array], }"#;
+        let result = parse_value_string(input).unwrap();
+        assert_eq!(result, json!({"items": "__truncated_array__"}));
+    }
+
+    #[test]
+    fn normalize_encodes_undefined() {
+        let out = normalize_inspect_format(r#"Object { "x": undefined }"#);
+        assert_eq!(out, r#"{ "x": "__js_undefined__" }"#);
+    }
+
+    // ── fix_string_escapes ──────────────────────────────────────────────────
+
+    #[test]
+    fn fix_escapes_passes_through_valid_json_escapes() {
+        let input = r#"{ "a": "hello\nworld" }"#;
+        let out = fix_string_escapes(input);
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn fix_escapes_doubles_bare_backslash() {
+        // \U and \p are not valid JSON escape sequences — both should be doubled.
+        // (\f, \n, \r, \t, \b, \u, \\, \/, \" are valid and passed through.)
+        let input = r#"{ "path": "C:\Windows\path" }"#;
+        let out = fix_string_escapes(input);
+        assert_eq!(out, r#"{ "path": "C:\\Windows\\path" }"#);
+    }
+
+    #[test]
+    fn fix_escapes_leaves_structure_untouched() {
+        let input = r#"{ "a": 1 }"#;
+        let out = fix_string_escapes(input);
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn fix_escapes_handles_escaped_quote_inside_string() {
+        let input = r#"{ "a": "say \"hi\"" }"#;
+        let out = fix_string_escapes(input);
+        assert_eq!(out, input);
+    }
+
+    // ── remove_trailing_commas ──────────────────────────────────────────────
+
+    #[test]
+    fn remove_trailing_comma_before_brace() {
+        assert_eq!(remove_trailing_commas(r#"{"a": 1,}"#), r#"{"a": 1}"#);
+    }
+
+    #[test]
+    fn remove_trailing_comma_before_bracket() {
+        assert_eq!(remove_trailing_commas("[1, 2,]"), "[1, 2]");
+    }
+
+    #[test]
+    fn remove_trailing_comma_with_whitespace() {
+        assert_eq!(remove_trailing_commas("[1, 2,  ]"), "[1, 2  ]");
+    }
+
+    #[test]
+    fn remove_trailing_comma_keeps_inner_commas() {
+        let input = r#"{"a": 1, "b": 2}"#;
+        assert_eq!(remove_trailing_commas(input), input);
+    }
+
+    #[test]
+    fn remove_trailing_comma_nested() {
+        let input = r#"{"a": [1, 2,], "b": 3,}"#;
+        assert_eq!(remove_trailing_commas(input), r#"{"a": [1, 2], "b": 3}"#);
+    }
 }

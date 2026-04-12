@@ -15,11 +15,13 @@ pub struct FailureDetail {
     pub expected: Option<String>,
     pub actual: Option<String>,
     /// Parsed structured form of `expected`, if the runner could produce it.
+    /// May be an `Object` or `Array` value.
     #[serde(skip)]
-    pub expected_parsed: Option<serde_json::Map<String, serde_json::Value>>,
+    pub expected_parsed: Option<serde_json::Value>,
     /// Parsed structured form of `actual`, if the runner could produce it.
+    /// May be an `Object` or `Array` value.
     #[serde(skip)]
-    pub actual_parsed: Option<serde_json::Map<String, serde_json::Value>>,
+    pub actual_parsed: Option<serde_json::Value>,
     pub diff: Option<String>,
     pub source_snippet: Option<String>,
     pub stack_trace: Option<String>,
