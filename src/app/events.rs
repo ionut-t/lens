@@ -81,6 +81,9 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
         TestEvent::FileStarted { path } => {
             let file_name = file_display_name(app, &path);
             let file_id = find_or_create_file_node(app, &file_name, &path);
+            if let Some(node) = app.tree.get_mut(file_id) {
+                node.console_output.clear();
+            }
             app.tree.mark_children_stale(file_id);
         }
 

@@ -142,10 +142,12 @@ pub fn draw(frame: &mut Frame, app: &App, scroll_offset: u16, area: Rect) -> u16
                 )));
                 lines.push(Line::from(""));
                 for log_line in console_output {
-                    lines.push(Line::from(Span::styled(
-                        log_line.clone(),
-                        Style::default().fg(theme::SUBTEXT0),
-                    )));
+                    for sub_line in log_line.lines() {
+                        lines.push(Line::from(Span::styled(
+                            sub_line.to_string(),
+                            Style::default().fg(theme::SUBTEXT0),
+                        )));
+                    }
                 }
             }
 
