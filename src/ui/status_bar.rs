@@ -15,6 +15,7 @@ enum CommandHelp {
     ApplyFilter,
     ExitFilter,
     YankPath,
+    YankFailureLocation,
 }
 
 impl CommandHelp {
@@ -29,6 +30,7 @@ impl CommandHelp {
                 CommandHelp::Filter,
                 CommandHelp::Edit,
                 CommandHelp::YankPath,
+                CommandHelp::YankFailureLocation,
                 CommandHelp::Quit,
             ]
         };
@@ -58,6 +60,7 @@ impl CommandHelp {
             CommandHelp::ExitFilter => "[esc]",
             CommandHelp::ApplyFilter => "[enter]",
             CommandHelp::YankPath => "[y]",
+            CommandHelp::YankFailureLocation => "[Y]",
         }
     }
 
@@ -72,6 +75,7 @@ impl CommandHelp {
             CommandHelp::ExitFilter => "clear",
             CommandHelp::ApplyFilter => "apply",
             CommandHelp::YankPath => "yank path",
+            CommandHelp::YankFailureLocation => "yank failure loc",
         }
     }
 }

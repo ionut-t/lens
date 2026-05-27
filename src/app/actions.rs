@@ -37,6 +37,7 @@ pub enum Action {
     FilterApply,
     OpenInEditor,
     YankPath,
+    YankFailureLocation,
 }
 
 /// Process a keyboard action.
@@ -393,12 +394,22 @@ pub fn handle_action(app: &mut App, action: Action) {
 
         Action::YankPath => {
             if let Some(node_id) = app.selected_node_id() {
+                // Capture the selected node's kind and location before walking up.
+                let (selected_kind, selected_location) = app
+                    .tree
+                    .get(node_id)
+                    .map(|n| (n.kind, n.location))
+                    .unwrap_or((NodeKind::File, None));
+
                 let mut current = Some(node_id);
                 while let Some(id) = current {
                     if let Some(node) = app.tree.get(id) {
                         if node.kind == NodeKind::File {
+                            // For test/suite nodes append :line:col when the location is known.
+                            let path_str =
+                                build_yank_string(&node.name, selected_kind, selected_location);
                             match Clipboard::new() {
-                                Ok(mut cb) => match cb.set_text(node.name.clone()) {
+                                Ok(mut cb) => match cb.set_text(path_str) {
                                     Ok(_) => app.notifier.info("Path yanked", 1),
                                     Err(_) => app.notifier.error("Failed to copy to clipboard"),
                                 },
@@ -408,6 +419,41 @@ pub fn handle_action(app: &mut App, action: Action) {
                             break;
                         }
                         current = node.parent;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        Action::YankFailureLocation => {
+            if let Some(node_id) = app.selected_node_id() {
+                let node = app.tree.get(node_id);
+
+                // Prefer the failure stack-trace location; fall back to the test definition.
+                let (line, col) = node
+                    .and_then(|n| n.result.as_ref())
+                    .and_then(|r| r.failure.as_ref())
+                    .and_then(|f| f.stack_trace.as_ref())
+                    .and_then(|st| parse_line_col_from_stack(st))
+                    .or_else(|| node.and_then(|n| n.location.map(|(l, c)| (Some(l), Some(c)))))
+                    .unwrap_or((None, None));
+
+                let mut current = Some(node_id);
+                while let Some(id) = current {
+                    if let Some(n) = app.tree.get(id) {
+                        if n.kind == NodeKind::File {
+                            let path_str = build_failure_yank_string(&n.name, line, col);
+                            match Clipboard::new() {
+                                Ok(mut cb) => match cb.set_text(path_str) {
+                                    Ok(_) => app.notifier.info("Location yanked", 1),
+                                    Err(_) => app.notifier.error("Failed to copy to clipboard"),
+                                },
+                                Err(_) => app.notifier.error("Clipboard unavailable"),
+                            }
+                            break;
+                        }
+                        current = n.parent;
                     } else {
                         break;
                     }
@@ -466,6 +512,7 @@ fn map_key(key: KeyEvent) -> Option<Action> {
         KeyCode::PageUp => Some(Action::ScrollUp),
         KeyCode::PageDown => Some(Action::ScrollDown),
         KeyCode::Char('y') => Some(Action::YankPath),
+        KeyCode::Char('Y') => Some(Action::YankFailureLocation),
         _ => None,
     }
 }
@@ -480,6 +527,32 @@ fn set_running_status(app: &mut App, node_id: usize) {
         for child_id in children {
             set_running_status(app, child_id);
         }
+    }
+}
+
+/// Build the string that gets written to the clipboard for `YankPath`.
+///
+/// File nodes yield just the filename.  Test/Suite nodes append `:line:col`
+/// when a source location is available, so the result can be pasted directly
+/// into an editor's "go to file" prompt.
+fn build_yank_string(file_name: &str, kind: NodeKind, location: Option<(u32, u32)>) -> String {
+    match (kind, location) {
+        (NodeKind::Test | NodeKind::Suite, Some((line, col))) => {
+            format!("{}:{}:{}", file_name, line, col)
+        }
+        _ => file_name.to_owned(),
+    }
+}
+
+/// Build the string written to the clipboard for `YankFailureLocation`.
+///
+/// Appends `:line:col` when both are known, `:line` when only the line is known,
+/// and falls back to the bare filename when no location is available.
+fn build_failure_yank_string(file_name: &str, line: Option<u32>, col: Option<u32>) -> String {
+    match (line, col) {
+        (Some(l), Some(c)) => format!("{}:{}:{}", file_name, l, c),
+        (Some(l), None) => format!("{}:{}", file_name, l),
+        _ => file_name.to_owned(),
     }
 }
 
@@ -606,6 +679,84 @@ mod tests {
         assert_eq!(
             parse_line_col_from_stack("Error: something went wrong"),
             None
+        );
+    }
+
+    // --- build_yank_string ---
+
+    #[test]
+    fn test_yank_string_file_node_is_plain_path() {
+        // Selecting a file node always yields just the path, no suffix.
+        let s = build_yank_string("src/foo.test.ts", NodeKind::File, Some((10, 5)));
+        assert_eq!(s, "src/foo.test.ts");
+    }
+
+    #[test]
+    fn test_yank_string_test_with_location_appends_line_col() {
+        let s = build_yank_string("src/foo.test.ts", NodeKind::Test, Some((42, 7)));
+        assert_eq!(s, "src/foo.test.ts:42:7");
+    }
+
+    #[test]
+    fn test_yank_string_suite_with_location_appends_line_col() {
+        let s = build_yank_string("src/bar.test.ts", NodeKind::Suite, Some((1, 1)));
+        assert_eq!(s, "src/bar.test.ts:1:1");
+    }
+
+    #[test]
+    fn test_yank_string_test_without_location_is_plain_path() {
+        // No location recorded yet (e.g. test discovered but not yet run).
+        let s = build_yank_string("src/foo.test.ts", NodeKind::Test, None);
+        assert_eq!(s, "src/foo.test.ts");
+    }
+
+    #[test]
+    fn test_yank_string_suite_without_location_is_plain_path() {
+        let s = build_yank_string("src/bar.test.ts", NodeKind::Suite, None);
+        assert_eq!(s, "src/bar.test.ts");
+    }
+
+    #[test]
+    fn test_yank_string_workspace_node_is_plain_path() {
+        // Workspace/Project nodes that have no location should never get a suffix.
+        let s = build_yank_string("my-project", NodeKind::Workspace, Some((1, 1)));
+        assert_eq!(s, "my-project");
+    }
+
+    // --- build_failure_yank_string ---
+
+    #[test]
+    fn test_failure_yank_both_line_and_col() {
+        assert_eq!(
+            build_failure_yank_string("src/foo.test.ts", Some(42), Some(7)),
+            "src/foo.test.ts:42:7"
+        );
+    }
+
+    #[test]
+    fn test_failure_yank_line_only() {
+        // Some stack traces only give a line number.
+        assert_eq!(
+            build_failure_yank_string("src/foo.test.ts", Some(99), None),
+            "src/foo.test.ts:99"
+        );
+    }
+
+    #[test]
+    fn test_failure_yank_no_location_falls_back_to_plain_path() {
+        // No failure and no definition location → plain path.
+        assert_eq!(
+            build_failure_yank_string("src/foo.test.ts", None, None),
+            "src/foo.test.ts"
+        );
+    }
+
+    #[test]
+    fn test_failure_yank_col_without_line_falls_back_to_plain_path() {
+        // A col without a line is nonsensical; treat as no location.
+        assert_eq!(
+            build_failure_yank_string("src/foo.test.ts", None, Some(5)),
+            "src/foo.test.ts"
         );
     }
 }
