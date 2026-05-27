@@ -38,6 +38,7 @@ pub enum Action {
     OpenInEditor,
     YankPath,
     YankFailureLocation,
+    ToggleHelp,
 }
 
 /// Process a keyboard action.
@@ -426,6 +427,10 @@ pub fn handle_action(app: &mut App, action: Action) {
             }
         }
 
+        Action::ToggleHelp => {
+            app.show_help = !app.show_help;
+        }
+
         Action::YankFailureLocation => {
             if let Some(node_id) = app.selected_node_id() {
                 let node = app.tree.get(node_id);
@@ -463,7 +468,12 @@ pub fn handle_action(app: &mut App, action: Action) {
     }
 }
 
-pub fn trigger_action(key: KeyEvent, filter_active: bool) -> Option<Action> {
+pub fn trigger_action(key: KeyEvent, filter_active: bool, show_help: bool) -> Option<Action> {
+    // Any key while the help overlay is open just closes it.
+    if show_help {
+        return Some(Action::ToggleHelp);
+    }
+
     if filter_active {
         match key.code {
             KeyCode::Esc => Some(Action::FilterExit),
@@ -513,6 +523,7 @@ fn map_key(key: KeyEvent) -> Option<Action> {
         KeyCode::PageDown => Some(Action::ScrollDown),
         KeyCode::Char('y') => Some(Action::YankPath),
         KeyCode::Char('Y') => Some(Action::YankFailureLocation),
+        KeyCode::Char('?') => Some(Action::ToggleHelp),
         _ => None,
     }
 }

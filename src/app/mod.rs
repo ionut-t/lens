@@ -74,6 +74,7 @@ pub struct App {
     pub run_start: Option<std::time::Instant>,
     pub project_name: Option<String>,
     pub notifier: Notifier,
+    pub show_help: bool,
 }
 
 impl App {
@@ -112,6 +113,7 @@ impl App {
             run_start: None,
             project_name: None,
             notifier: Notifier::new(),
+            show_help: false,
         };
         (app, event_rx)
     }

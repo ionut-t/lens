@@ -5,79 +5,28 @@ use crate::{app::App, models::NodeKind};
 
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-enum CommandHelp {
-    RunAll,
-    Watch,
-    Rerun,
-    Filter,
-    Edit,
-    Quit,
-    ApplyFilter,
-    ExitFilter,
-    YankPath,
-    YankFailureLocation,
-}
-
-impl CommandHelp {
-    fn get(filter_active: bool) -> Vec<Span<'static>> {
-        let commands = if filter_active {
-            vec![CommandHelp::ApplyFilter, CommandHelp::ExitFilter]
-        } else {
-            vec![
-                CommandHelp::RunAll,
-                CommandHelp::Watch,
-                CommandHelp::Rerun,
-                CommandHelp::Filter,
-                CommandHelp::Edit,
-                CommandHelp::YankPath,
-                CommandHelp::YankFailureLocation,
-                CommandHelp::Quit,
-            ]
-        };
-
-        commands
-            .into_iter()
-            .flat_map(|cmd| {
-                vec![
-                    Span::styled(
-                        format!("{} ", cmd.label()),
-                        Style::default().fg(theme::BLUE),
-                    ),
-                    Span::raw(format!("{}  ", cmd.description())),
-                ]
-            })
-            .collect()
+/// Keybinding hints shown permanently in the status bar.
+/// Kept intentionally short — full reference is in the help overlay ([?]).
+fn primary_hints(filter_active: bool) -> Vec<Span<'static>> {
+    if filter_active {
+        return vec![
+            Span::styled("[enter] ", Style::default().fg(theme::BLUE)),
+            Span::raw("apply  "),
+            Span::styled("[esc] ", Style::default().fg(theme::BLUE)),
+            Span::raw("clear  "),
+        ];
     }
 
-    fn label(&self) -> &'static str {
-        match self {
-            CommandHelp::Filter => "[f]",
-            CommandHelp::Rerun => "[r]",
-            CommandHelp::Edit => "[e]",
-            CommandHelp::RunAll => "[a]",
-            CommandHelp::Watch => "[w]",
-            CommandHelp::Quit => "[q]",
-            CommandHelp::ExitFilter => "[esc]",
-            CommandHelp::ApplyFilter => "[enter]",
-            CommandHelp::YankPath => "[y]",
-            CommandHelp::YankFailureLocation => "[Y]",
-        }
-    }
-
-    fn description(&self) -> &'static str {
-        match self {
-            CommandHelp::Filter => "filter",
-            CommandHelp::Rerun => "rerun failed",
-            CommandHelp::Edit => "edit",
-            CommandHelp::RunAll => "run all",
-            CommandHelp::Watch => "watch",
-            CommandHelp::Quit => "quit",
-            CommandHelp::ExitFilter => "clear",
-            CommandHelp::ApplyFilter => "apply",
-            CommandHelp::YankPath => "yank path",
-            CommandHelp::YankFailureLocation => "yank failure loc",
-        }
-    }
+    vec![
+        Span::styled("[a] ", Style::default().fg(theme::BLUE)),
+        Span::raw("run all  "),
+        Span::styled("[r] ", Style::default().fg(theme::BLUE)),
+        Span::raw("rerun  "),
+        Span::styled("[w] ", Style::default().fg(theme::BLUE)),
+        Span::raw("watch  "),
+        Span::styled("[?] ", Style::default().fg(theme::BLUE)),
+        Span::raw("help  "),
+    ]
 }
 
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
@@ -107,7 +56,7 @@ fn get_help(app: &App) -> Line<'_> {
             Style::default().fg(theme::YELLOW),
         )])
     } else {
-        let mut spans = CommandHelp::get(app.filter_active);
+        let mut spans = primary_hints(app.filter_active);
         spans.push(Span::styled(
             watch_indicator,
             Style::default().fg(theme::TEAL),

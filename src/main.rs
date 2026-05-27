@@ -72,7 +72,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                 None => break,
                 Some(Err(e)) => return Err(e.into()),
                 Some(Ok(Event::Key(key))) => {
-                    let action = trigger_action(key, app.filter_active);
+                    let action = trigger_action(key, app.filter_active, app.show_help);
 
                     if let Some(action) = action {
                         if let Some(ref runner) = test_runner {
