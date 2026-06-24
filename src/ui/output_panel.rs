@@ -23,7 +23,7 @@ pub fn draw(frame: &mut Frame, app: &App, scroll_offset: u16, area: Rect) -> u16
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Split inner area: progress bar on top, detail content below
+    // Split inner area: progress bar on top, output content below
     let [progress_area, content_area] =
         Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
 
@@ -35,7 +35,7 @@ pub fn draw(frame: &mut Frame, app: &App, scroll_offset: u16, area: Rect) -> u16
         .label(format!("{}%", percent));
     frame.render_widget(gauge, progress_area);
 
-    // Detail content: show selected node's failure info + console output
+    // Output panel: show selected node's failure info + console output
     let content = if let Some(node_id) = app.selected_node_id() {
         if let Some(node) = app.tree.get(node_id) {
             let mut lines: Vec<Line> = Vec::new();
@@ -67,7 +67,7 @@ pub fn draw(frame: &mut Frame, app: &App, scroll_offset: u16, area: Rect) -> u16
                             let failure_text = build_failure_text(failure, &node.name);
                             lines.extend(failure_text.lines);
                         } else {
-                            lines.push(Line::from("No failure details available."));
+                            lines.push(Line::from("No failure output available."));
                         }
                     }
                 } else {
@@ -153,10 +153,10 @@ pub fn draw(frame: &mut Frame, app: &App, scroll_offset: u16, area: Rect) -> u16
 
             Text::from(lines)
         } else {
-            Text::from("Select a test to view details.")
+            Text::from("Select a test to view its output.")
         }
     } else {
-        Text::from("Select a test to view details.")
+        Text::from("Select a test to view its output.")
     };
 
     let max_scroll = content
@@ -476,7 +476,7 @@ fn push_json_value_lines<'a>(
 }
 
 fn build_failure_text<'a>(
-    failure: &'a crate::models::FailureDetail,
+    failure: &'a crate::models::FailureOutput,
     test_name: &'a str,
 ) -> Text<'a> {
     let mut lines: Vec<Line> = vec![
@@ -617,7 +617,7 @@ fn build_failure_text<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::FailureDetail;
+    use crate::models::FailureOutput;
     use serde_json::json;
 
     fn line_text(line: &Line) -> String {
@@ -627,8 +627,8 @@ mod tests {
     fn make_failure(
         expected_parsed: Option<serde_json::Value>,
         actual_parsed: Option<serde_json::Value>,
-    ) -> FailureDetail {
-        FailureDetail {
+    ) -> FailureOutput {
+        FailureOutput {
             message: "assertion failed".into(),
             expected: None,
             actual: None,
@@ -979,7 +979,7 @@ mod tests {
     #[test]
     fn build_failure_text_mixed_types_falls_back_to_raw() {
         // expected is array, actual is object — no structured diff
-        let failure = FailureDetail {
+        let failure = FailureOutput {
             message: "oops".into(),
             expected: Some("exp".into()),
             actual: Some("act".into()),
@@ -998,7 +998,7 @@ mod tests {
 
     #[test]
     fn build_failure_text_raw_fallback_splits_multiline_expected() {
-        let failure = FailureDetail {
+        let failure = FailureOutput {
             message: "oops".into(),
             expected: Some("line one\nline two\nline three".into()),
             actual: Some("other".into()),
@@ -1020,7 +1020,7 @@ mod tests {
 
     #[test]
     fn build_failure_text_raw_fallback_splits_multiline_actual() {
-        let failure = FailureDetail {
+        let failure = FailureOutput {
             message: "oops".into(),
             expected: Some("[]".into()),
             actual: Some("Array [\n  \"a\",\n  \"b\",\n]".into()),

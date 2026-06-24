@@ -6,11 +6,11 @@ use super::status::TestStatus;
 pub struct TestResult {
     pub status: TestStatus,
     pub duration_ms: Option<u64>,
-    pub failure: Option<FailureDetail>,
+    pub failure: Option<FailureOutput>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FailureDetail {
+pub struct FailureOutput {
     pub message: String,
     pub expected: Option<String>,
     pub actual: Option<String>,

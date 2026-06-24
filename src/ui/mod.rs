@@ -1,8 +1,8 @@
-mod detail_panel;
 mod failure_list;
 mod help_overlay;
 mod layout;
 pub mod notifications;
+mod output_panel;
 mod search_box;
 mod status_bar;
 mod test_tree;

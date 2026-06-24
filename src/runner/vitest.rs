@@ -8,7 +8,7 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 
 use crate::app::TestEvent;
-use crate::models::{FailureDetail, RunSummary, TestResult, TestStatus};
+use crate::models::{FailureOutput, RunSummary, TestResult, TestStatus};
 
 use super::{DiscoveredFile, TestRunner};
 
@@ -392,12 +392,20 @@ impl TestRunner for VitestRunner {
         }
     }
 
-    async fn run_files(&self, files: &[PathBuf], tx: mpsc::UnboundedSender<TestEvent>) -> Result<()> {
-        let file_args: Vec<String> = files.iter().map(|f| f.to_string_lossy().to_string()).collect();
+    async fn run_files(
+        &self,
+        files: &[PathBuf],
+        tx: mpsc::UnboundedSender<TestEvent>,
+    ) -> Result<()> {
+        let file_args: Vec<String> = files
+            .iter()
+            .map(|f| f.to_string_lossy().to_string())
+            .collect();
         let file_arg_strs: Vec<&str> = file_args.iter().map(String::as_str).collect();
         let configs = self.find_vitest_configs();
         if configs.is_empty() {
-            self.spawn_and_stream(&file_arg_strs, tx, false, None, None).await
+            self.spawn_and_stream(&file_arg_strs, tx, false, None, None)
+                .await
         } else {
             let reporter_file = self.write_reporter()?;
             let reporter_path = reporter_file.path().to_string_lossy().to_string();
@@ -631,7 +639,7 @@ impl VitestEvent {
                         let actual = e.actual.map(|s| strip_ansi(&s));
                         let expected_parsed = expected.as_deref().and_then(parse_value_string);
                         let actual_parsed = actual.as_deref().and_then(parse_value_string);
-                        FailureDetail {
+                        FailureOutput {
                             message: strip_ansi(&e.message.unwrap_or_default()),
                             expected,
                             actual,

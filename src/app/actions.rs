@@ -69,18 +69,18 @@ pub fn handle_action(app: &mut App, action: Action) {
         Action::NavigateUp => match app.active_panel {
             Panel::TestTree => {
                 app.selected_tree_index = app.selected_tree_index.saturating_sub(1);
-                app.detail_scroll_offset = 0;
+                app.output_scroll_offset = 0;
                 app.adjust_tree_scroll();
             }
 
             Panel::FailedList => {
                 app.selected_failed_index = app.selected_failed_index.saturating_sub(1);
-                app.detail_scroll_offset = 0;
+                app.output_scroll_offset = 0;
                 app.adjust_failed_scroll();
             }
 
             Panel::Output => {
-                app.detail_scroll_offset = app.detail_scroll_offset.saturating_sub(1);
+                app.output_scroll_offset = app.output_scroll_offset.saturating_sub(1);
             }
         },
 
@@ -88,19 +88,19 @@ pub fn handle_action(app: &mut App, action: Action) {
             Panel::TestTree => {
                 let max = app.visible_tree_nodes().len().saturating_sub(1);
                 app.selected_tree_index = (app.selected_tree_index + 1).min(max);
-                app.detail_scroll_offset = 0;
+                app.output_scroll_offset = 0;
                 app.adjust_tree_scroll();
             }
 
             Panel::FailedList => {
                 let max = app.tree.failed_nodes().len().saturating_sub(1);
                 app.selected_failed_index = (app.selected_failed_index + 1).min(max);
-                app.detail_scroll_offset = 0;
+                app.output_scroll_offset = 0;
                 app.adjust_failed_scroll();
             }
 
             Panel::Output => {
-                app.detail_scroll_offset = app.detail_scroll_offset.saturating_add(1);
+                app.output_scroll_offset = app.output_scroll_offset.saturating_add(1);
             }
         },
 
@@ -109,16 +109,16 @@ pub fn handle_action(app: &mut App, action: Action) {
             match app.active_panel {
                 Panel::TestTree => {
                     app.selected_tree_index = app.selected_tree_index.saturating_sub(half);
-                    app.detail_scroll_offset = 0;
+                    app.output_scroll_offset = 0;
                     app.adjust_tree_scroll();
                 }
                 Panel::FailedList => {
                     app.selected_failed_index = app.selected_failed_index.saturating_sub(half);
-                    app.detail_scroll_offset = 0;
+                    app.output_scroll_offset = 0;
                     app.adjust_failed_scroll();
                 }
                 Panel::Output => {
-                    app.detail_scroll_offset = app.detail_scroll_offset.saturating_sub(half as u16);
+                    app.output_scroll_offset = app.output_scroll_offset.saturating_sub(half as u16);
                 }
             }
         }
@@ -129,17 +129,17 @@ pub fn handle_action(app: &mut App, action: Action) {
                 Panel::TestTree => {
                     let max = app.visible_tree_nodes().len().saturating_sub(1);
                     app.selected_tree_index = (app.selected_tree_index + half).min(max);
-                    app.detail_scroll_offset = 0;
+                    app.output_scroll_offset = 0;
                     app.adjust_tree_scroll();
                 }
                 Panel::FailedList => {
                     let max = app.tree.failed_nodes().len().saturating_sub(1);
                     app.selected_failed_index = (app.selected_failed_index + half).min(max);
-                    app.detail_scroll_offset = 0;
+                    app.output_scroll_offset = 0;
                     app.adjust_failed_scroll();
                 }
                 Panel::Output => {
-                    app.detail_scroll_offset = app.detail_scroll_offset.saturating_add(half as u16);
+                    app.output_scroll_offset = app.output_scroll_offset.saturating_add(half as u16);
                 }
             }
         }
@@ -172,15 +172,15 @@ pub fn handle_action(app: &mut App, action: Action) {
             Panel::TestTree => {
                 app.selected_tree_index = 0;
                 app.tree_scroll_offset = 0;
-                app.detail_scroll_offset = 0;
+                app.output_scroll_offset = 0;
             }
             Panel::FailedList => {
                 app.selected_failed_index = 0;
                 app.failed_scroll_offset = 0;
-                app.detail_scroll_offset = 0;
+                app.output_scroll_offset = 0;
             }
             Panel::Output => {
-                app.detail_scroll_offset = 0;
+                app.output_scroll_offset = 0;
             }
         },
 
@@ -188,17 +188,17 @@ pub fn handle_action(app: &mut App, action: Action) {
             Panel::TestTree => {
                 let max = app.visible_tree_nodes().len().saturating_sub(1);
                 app.selected_tree_index = max;
-                app.detail_scroll_offset = 0;
+                app.output_scroll_offset = 0;
                 app.adjust_tree_scroll();
             }
             Panel::FailedList => {
                 let max = app.tree.failed_nodes().len().saturating_sub(1);
                 app.selected_failed_index = max;
-                app.detail_scroll_offset = 0;
+                app.output_scroll_offset = 0;
                 app.adjust_failed_scroll();
             }
             Panel::Output => {
-                app.detail_scroll_offset = u16::MAX;
+                app.output_scroll_offset = u16::MAX;
             }
         },
 
@@ -211,7 +211,7 @@ pub fn handle_action(app: &mut App, action: Action) {
                         && node.kind == NodeKind::File
                     {
                         app.selected_tree_index = i;
-                        app.detail_scroll_offset = 0;
+                        app.output_scroll_offset = 0;
                         app.adjust_tree_scroll();
                         break;
                     }
@@ -228,7 +228,7 @@ pub fn handle_action(app: &mut App, action: Action) {
                         && node.kind == NodeKind::File
                     {
                         app.selected_tree_index = i;
-                        app.detail_scroll_offset = 0;
+                        app.output_scroll_offset = 0;
                         app.adjust_tree_scroll();
                         break;
                     }
@@ -245,7 +245,7 @@ pub fn handle_action(app: &mut App, action: Action) {
                         && node.status == TestStatus::Failed
                     {
                         app.selected_tree_index = i;
-                        app.detail_scroll_offset = 0;
+                        app.output_scroll_offset = 0;
                         app.adjust_tree_scroll();
                         break;
                     }
@@ -262,7 +262,7 @@ pub fn handle_action(app: &mut App, action: Action) {
                         && node.status == TestStatus::Failed
                     {
                         app.selected_tree_index = i;
-                        app.detail_scroll_offset = 0;
+                        app.output_scroll_offset = 0;
                         app.adjust_tree_scroll();
                         break;
                     }
@@ -482,7 +482,7 @@ pub fn handle_action(app: &mut App, action: Action) {
         }
 
         Action::YankOutput => {
-            if let Some(text) = build_detail_plain_text(app) {
+            if let Some(text) = build_output_plain_text(app) {
                 match Clipboard::new() {
                     Ok(mut cb) => match cb.set_text(text) {
                         Ok(_) => app.notifier.info("Output copied", 1),
@@ -660,8 +660,8 @@ fn parse_line_col_from_stack(stack: &str) -> Option<(Option<u32>, Option<u32>)> 
     None
 }
 
-/// Build a plain-text copy of the detail panel content for the selected node.
-fn build_detail_plain_text(app: &App) -> Option<String> {
+/// Build a plain-text copy of the output panel content for the selected node.
+fn build_output_plain_text(app: &App) -> Option<String> {
     let node_id = app.selected_node_id()?;
     let node = app.tree.get(node_id)?;
 
@@ -700,7 +700,7 @@ fn build_detail_plain_text(app: &App) -> Option<String> {
             }
         }
     } else {
-        for fid in detail_failed_descendants(&app.tree, node_id) {
+        for fid in output_failed_descendants(&app.tree, node_id) {
             if let Some(fnode) = app.tree.get(fid)
                 && let Some(ref result) = fnode.result
                 && let Some(ref failure) = result.failure
@@ -740,7 +740,7 @@ fn build_detail_plain_text(app: &App) -> Option<String> {
     }
 }
 
-fn detail_failed_descendants(tree: &crate::models::TestTree, node_id: usize) -> Vec<usize> {
+fn output_failed_descendants(tree: &crate::models::TestTree, node_id: usize) -> Vec<usize> {
     let mut result = Vec::new();
     if let Some(node) = tree.get(node_id) {
         for &child in &node.children {
@@ -748,7 +748,7 @@ fn detail_failed_descendants(tree: &crate::models::TestTree, node_id: usize) -> 
                 if child_node.kind == NodeKind::Test && child_node.status == TestStatus::Failed {
                     result.push(child);
                 }
-                result.extend(detail_failed_descendants(tree, child));
+                result.extend(output_failed_descendants(tree, child));
             }
         }
     }
