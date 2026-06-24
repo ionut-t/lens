@@ -33,6 +33,8 @@ pub enum Action {
     RerunFailed,
     ToggleWatch,
     FilterEnter,
+    FilterByFile,
+    FilterByDir,
     FilterKey(KeyEvent),
     FilterExit,
     FilterApply,
@@ -370,6 +372,34 @@ pub fn handle_action(app: &mut App, action: Action) {
             app.filter_active = true;
         }
 
+        Action::FilterByFile => {
+            if let Some(file_id) = find_file_node_for_selection(app)
+                && let Some(node) = app.tree.get(file_id)
+            {
+                app.filter = tui_input::Input::from(node.name.clone());
+                app.filter_active = false;
+                app.selected_tree_index = 0;
+                app.tree_scroll_offset = 0;
+            }
+        }
+
+        Action::FilterByDir => {
+            if let Some(file_id) = find_file_node_for_selection(app)
+                && let Some(node) = app.tree.get(file_id)
+            {
+                let dir = std::path::Path::new(&node.name)
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .map(|p| p.to_string_lossy().into_owned());
+                if let Some(dir) = dir {
+                    app.filter = tui_input::Input::from(dir);
+                    app.filter_active = false;
+                    app.selected_tree_index = 0;
+                    app.tree_scroll_offset = 0;
+                }
+            }
+        }
+
         Action::FilterKey(key) => {
             use tui_input::backend::crossterm::EventHandler;
             app.filter.handle_event(&crossterm::event::Event::Key(key));
@@ -541,7 +571,9 @@ fn map_key(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('A') => Some(Action::RunAll),
         KeyCode::Char('r') => Some(Action::RerunFailed),
         KeyCode::Char('w') => Some(Action::ToggleWatch),
-        KeyCode::Char('f') | KeyCode::Char('/') => Some(Action::FilterEnter),
+        KeyCode::Char('/') => Some(Action::FilterEnter),
+        KeyCode::Char('f') => Some(Action::FilterByFile),
+        KeyCode::Char('F') => Some(Action::FilterByDir),
         KeyCode::Char('e') => Some(Action::OpenInEditor),
         KeyCode::PageUp => Some(Action::ScrollUp),
         KeyCode::PageDown => Some(Action::ScrollDown),
@@ -610,6 +642,20 @@ fn parse_line_col_from_stack(stack: &str) -> Option<(Option<u32>, Option<u32>)> 
                 return Some((line, None));
             }
         }
+    }
+    None
+}
+
+/// Walk up from the currently selected node to its ancestor file node.
+fn find_file_node_for_selection(app: &App) -> Option<usize> {
+    let node_id = app.selected_node_id()?;
+    let mut current = Some(node_id);
+    while let Some(id) = current {
+        let node = app.tree.get(id)?;
+        if node.kind == NodeKind::File {
+            return Some(id);
+        }
+        current = node.parent;
     }
     None
 }

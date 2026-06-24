@@ -31,7 +31,9 @@ const BINDINGS: &[(&str, &str)] = &[
     ("r", "rerun failed"),
     ("w", "toggle watch mode"),
     ("e", "open in editor"),
-    ("f / /", "filter files"),
+    ("/", "filter files"),
+    ("f", "filter by current file"),
+    ("F", "filter by current directory"),
     ("y", "yank file path"),
     ("Y", "yank failure location"),
     ("?", "toggle this help"),
@@ -51,7 +53,12 @@ pub fn draw(frame: &mut Frame) {
     let area = frame.area();
     let x = area.x + area.width.saturating_sub(width) / 2;
     let y = area.y + area.height.saturating_sub(height) / 2;
-    let popup = Rect { x, y, width: width.min(area.width), height: height.min(area.height) };
+    let popup = Rect {
+        x,
+        y,
+        width: width.min(area.width),
+        height: height.min(area.height),
+    };
 
     frame.render_widget(Clear, popup);
 
@@ -59,7 +66,10 @@ pub fn draw(frame: &mut Frame) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme::BLUE))
         .style(Style::default().bg(theme::MANTLE))
-        .title(Span::styled(" Help ", Style::default().fg(theme::BLUE).bold()))
+        .title(Span::styled(
+            " Help ",
+            Style::default().fg(theme::BLUE).bold(),
+        ))
         .title_alignment(Alignment::Center);
 
     let inner = block.inner(popup);
@@ -82,10 +92,7 @@ pub fn draw(frame: &mut Frame) {
                 vec![Line::raw("")]
             } else {
                 vec![Line::from(vec![
-                    Span::styled(
-                        format!(" {:<16}", key),
-                        Style::default().fg(theme::BLUE),
-                    ),
+                    Span::styled(format!(" {:<16}", key), Style::default().fg(theme::BLUE)),
                     Span::styled("  ", Style::default()),
                     Span::raw(desc),
                 ])]
