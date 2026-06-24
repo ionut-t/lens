@@ -392,6 +392,26 @@ impl TestRunner for VitestRunner {
         }
     }
 
+    async fn run_files(&self, files: &[PathBuf], tx: mpsc::UnboundedSender<TestEvent>) -> Result<()> {
+        let file_args: Vec<String> = files.iter().map(|f| f.to_string_lossy().to_string()).collect();
+        let file_arg_strs: Vec<&str> = file_args.iter().map(String::as_str).collect();
+        let configs = self.find_vitest_configs();
+        if configs.is_empty() {
+            self.spawn_and_stream(&file_arg_strs, tx, false, None, None).await
+        } else {
+            let reporter_file = self.write_reporter()?;
+            let reporter_path = reporter_file.path().to_string_lossy().to_string();
+            let workspace_config = self.write_workspace_config(&configs, &reporter_path)?;
+            let ws_path = workspace_config.path().to_path_buf();
+            let result = self
+                .spawn_and_stream(&file_arg_strs, tx, false, Some(&ws_path), None)
+                .await;
+            drop(workspace_config);
+            drop(reporter_file);
+            result
+        }
+    }
+
     async fn run_file(&self, file: &Path, tx: mpsc::UnboundedSender<TestEvent>) -> Result<()> {
         let file_abs = file.to_string_lossy().to_string();
         if let Some(config) = self.find_config_for_file(file) {

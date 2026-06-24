@@ -35,6 +35,14 @@ pub trait TestRunner: Send + Sync {
         tx: mpsc::UnboundedSender<TestEvent>,
     ) -> Result<()>;
 
+    /// Run a specific subset of test files in a single process.
+    async fn run_files(&self, files: &[PathBuf], tx: mpsc::UnboundedSender<TestEvent>) -> Result<()> {
+        for file in files {
+            self.run_file(file, tx.clone()).await?;
+        }
+        Ok(())
+    }
+
     /// Run all tests in watch mode (re-runs on file changes).
     /// The process stays alive until the task is aborted.
     async fn run_all_watch(&self, tx: mpsc::UnboundedSender<TestEvent>) -> Result<()>;

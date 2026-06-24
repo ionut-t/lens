@@ -36,6 +36,7 @@ pub enum Panel {
 #[derive(Debug)]
 pub enum PendingRun {
     File(PathBuf),
+    Files(Vec<PathBuf>),
     Test { file: PathBuf, name: String },
 }
 

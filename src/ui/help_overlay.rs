@@ -26,7 +26,8 @@ const BINDINGS: &[(&str, &str)] = &[
     // ── Actions ─────────────────────────────────────────────────────────────
     ("Actions", ""),
     ("Enter", "run selected test / suite"),
-    ("a", "run all"),
+    ("a", "run filtered files (or all)"),
+    ("A", "run all files"),
     ("r", "rerun failed"),
     ("w", "toggle watch mode"),
     ("e", "open in editor"),

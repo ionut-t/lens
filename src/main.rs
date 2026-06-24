@@ -137,6 +137,15 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
 
                                         let runner_clone = Arc::clone(runner);
                                         match pending {
+                                            app::PendingRun::Files(paths) => {
+                                                tokio::spawn(async move {
+                                                    if let Err(e) = runner_clone.run_files(&paths, tx.clone()).await {
+                                                        let _ = tx.send(app::TestEvent::Error {
+                                                            message: format!("Runner error: {}", e),
+                                                        });
+                                                    }
+                                                });
+                                            }
                                             app::PendingRun::File(path) => {
                                                 if app.watch_mode {
                                                     app.watch_scope = app::WatchScope::File(path.clone());
@@ -193,7 +202,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                         } else {
                             // Runner not ready yet — handle navigation/UI actions, but skip run actions
                             match action {
-                                Action::RunAll | Action::RerunFailed | Action::ToggleWatch | Action::Select => {
+                                Action::RunAll | Action::RunFiltered | Action::RerunFailed | Action::ToggleWatch | Action::Select => {
                                     app.output_lines.push("[INFO] Runner is still loading...".into());
                                 }
                                 other => handle_action(&mut app, other),

@@ -29,6 +29,7 @@ pub enum Action {
     JumpToNextError,
     Select,
     RunAll,
+    RunFiltered,
     RerunFailed,
     ToggleWatch,
     FilterEnter,
@@ -321,6 +322,28 @@ pub fn handle_action(app: &mut App, action: Action) {
             app.full_run = true;
         }
 
+        Action::RunFiltered => {
+            let visible = app.visible_tree_nodes();
+            let file_ids: Vec<usize> = visible
+                .into_iter()
+                .filter(|&(id, _)| app.tree.get(id).is_some_and(|n| n.kind == NodeKind::File))
+                .map(|(id, _)| id)
+                .collect();
+            if file_ids.is_empty() {
+                return;
+            }
+            let paths: Vec<std::path::PathBuf> = file_ids
+                .iter()
+                .map(|&id| resolve_file_path(app, id))
+                .collect();
+            for &file_id in &file_ids {
+                set_running_status(app, file_id);
+            }
+            app.pending_runs.push(PendingRun::Files(paths));
+            app.running = true;
+            app.progress_done = 0;
+        }
+
         Action::RerunFailed => {
             let failed_ids = app.tree.failed_nodes();
             if failed_ids.is_empty() {
@@ -514,7 +537,8 @@ fn map_key(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('[') => Some(Action::JumpToPrevError),
         KeyCode::Char(']') => Some(Action::JumpToNextError),
         KeyCode::Enter => Some(Action::Select),
-        KeyCode::Char('a') => Some(Action::RunAll),
+        KeyCode::Char('a') => Some(Action::RunFiltered),
+        KeyCode::Char('A') => Some(Action::RunAll),
         KeyCode::Char('r') => Some(Action::RerunFailed),
         KeyCode::Char('w') => Some(Action::ToggleWatch),
         KeyCode::Char('f') | KeyCode::Char('/') => Some(Action::FilterEnter),
