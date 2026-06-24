@@ -30,7 +30,7 @@ pub enum WatchScope {
 pub enum Panel {
     TestTree,
     FailedList,
-    Detail,
+    Output,
 }
 
 #[derive(Debug)]

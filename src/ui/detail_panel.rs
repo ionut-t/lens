@@ -8,7 +8,7 @@ use crate::app::{App, Panel};
 use crate::models::{NodeKind, TestStatus};
 
 pub fn draw(frame: &mut Frame, app: &App, scroll_offset: u16, area: Rect) -> u16 {
-    let focused = app.active_panel == Panel::Detail;
+    let focused = app.active_panel == Panel::Output;
     let border_style = if focused {
         Style::default().fg(theme::BLUE)
     } else {
@@ -16,7 +16,7 @@ pub fn draw(frame: &mut Frame, app: &App, scroll_offset: u16, area: Rect) -> u16
     };
 
     let block = Block::default()
-        .title(" Detail ")
+        .title(" Output ")
         .borders(Borders::ALL)
         .border_style(border_style);
 

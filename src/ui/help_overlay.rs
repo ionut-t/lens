@@ -36,6 +36,7 @@ const BINDINGS: &[(&str, &str)] = &[
     ("F", "filter by current directory"),
     ("y", "yank file path"),
     ("Y", "yank failure location"),
+    ("c", "copy output"),
     ("?", "toggle this help"),
     ("q / Ctrl+c", "quit"),
 ];

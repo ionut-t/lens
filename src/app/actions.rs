@@ -41,6 +41,7 @@ pub enum Action {
     OpenInEditor,
     YankPath,
     YankFailureLocation,
+    YankOutput,
     ToggleHelp,
 }
 
@@ -52,16 +53,16 @@ pub fn handle_action(app: &mut App, action: Action) {
         Action::FocusNext => {
             app.active_panel = match app.active_panel {
                 Panel::TestTree => Panel::FailedList,
-                Panel::FailedList => Panel::Detail,
-                Panel::Detail => Panel::TestTree,
+                Panel::FailedList => Panel::Output,
+                Panel::Output => Panel::TestTree,
             };
         }
 
         Action::FocusPrevious => {
             app.active_panel = match app.active_panel {
-                Panel::TestTree => Panel::Detail,
+                Panel::TestTree => Panel::Output,
                 Panel::FailedList => Panel::TestTree,
-                Panel::Detail => Panel::FailedList,
+                Panel::Output => Panel::FailedList,
             };
         }
 
@@ -78,7 +79,7 @@ pub fn handle_action(app: &mut App, action: Action) {
                 app.adjust_failed_scroll();
             }
 
-            Panel::Detail => {
+            Panel::Output => {
                 app.detail_scroll_offset = app.detail_scroll_offset.saturating_sub(1);
             }
         },
@@ -98,7 +99,7 @@ pub fn handle_action(app: &mut App, action: Action) {
                 app.adjust_failed_scroll();
             }
 
-            Panel::Detail => {
+            Panel::Output => {
                 app.detail_scroll_offset = app.detail_scroll_offset.saturating_add(1);
             }
         },
@@ -116,7 +117,7 @@ pub fn handle_action(app: &mut App, action: Action) {
                     app.detail_scroll_offset = 0;
                     app.adjust_failed_scroll();
                 }
-                Panel::Detail => {
+                Panel::Output => {
                     app.detail_scroll_offset = app.detail_scroll_offset.saturating_sub(half as u16);
                 }
             }
@@ -137,7 +138,7 @@ pub fn handle_action(app: &mut App, action: Action) {
                     app.detail_scroll_offset = 0;
                     app.adjust_failed_scroll();
                 }
-                Panel::Detail => {
+                Panel::Output => {
                     app.detail_scroll_offset = app.detail_scroll_offset.saturating_add(half as u16);
                 }
             }
@@ -178,7 +179,7 @@ pub fn handle_action(app: &mut App, action: Action) {
                 app.failed_scroll_offset = 0;
                 app.detail_scroll_offset = 0;
             }
-            Panel::Detail => {
+            Panel::Output => {
                 app.detail_scroll_offset = 0;
             }
         },
@@ -196,7 +197,7 @@ pub fn handle_action(app: &mut App, action: Action) {
                 app.detail_scroll_offset = 0;
                 app.adjust_failed_scroll();
             }
-            Panel::Detail => {
+            Panel::Output => {
                 app.detail_scroll_offset = u16::MAX;
             }
         },
@@ -480,6 +481,18 @@ pub fn handle_action(app: &mut App, action: Action) {
             }
         }
 
+        Action::YankOutput => {
+            if let Some(text) = build_detail_plain_text(app) {
+                match Clipboard::new() {
+                    Ok(mut cb) => match cb.set_text(text) {
+                        Ok(_) => app.notifier.info("Output copied", 1),
+                        Err(_) => app.notifier.error("Failed to copy to clipboard"),
+                    },
+                    Err(_) => app.notifier.error("Clipboard unavailable"),
+                }
+            }
+        }
+
         Action::ToggleHelp => {
             app.show_help = !app.show_help;
         }
@@ -579,6 +592,7 @@ fn map_key(key: KeyEvent) -> Option<Action> {
         KeyCode::PageDown => Some(Action::ScrollDown),
         KeyCode::Char('y') => Some(Action::YankPath),
         KeyCode::Char('Y') => Some(Action::YankFailureLocation),
+        KeyCode::Char('c') => Some(Action::YankOutput),
         KeyCode::Char('?') => Some(Action::ToggleHelp),
         _ => None,
     }
@@ -644,6 +658,101 @@ fn parse_line_col_from_stack(stack: &str) -> Option<(Option<u32>, Option<u32>)> 
         }
     }
     None
+}
+
+/// Build a plain-text copy of the detail panel content for the selected node.
+fn build_detail_plain_text(app: &App) -> Option<String> {
+    let node_id = app.selected_node_id()?;
+    let node = app.tree.get(node_id)?;
+
+    let mut out = String::new();
+
+    // Breadcrumbs
+    let mut crumbs: Vec<String> = Vec::new();
+    let mut cur = Some(node_id);
+    while let Some(id) = cur {
+        if let Some(n) = app.tree.get(id) {
+            crumbs.push(n.name.clone());
+            cur = n.parent;
+        } else {
+            break;
+        }
+    }
+    crumbs.reverse();
+    out.push_str(&crumbs.join(" > "));
+
+    if node.kind == NodeKind::Test {
+        if let Some(ref result) = node.result
+            && let Some(ref failure) = result.failure
+        {
+            out.push_str("\n\n");
+            out.push_str(&failure.message);
+            if let (Some(e), Some(a)) = (&failure.expected, &failure.actual) {
+                out.push_str(&format!("\n\nExpected: {}\nActual:   {}", e, a));
+            }
+            if let Some(ref diff) = failure.diff {
+                out.push('\n');
+                out.push_str(diff);
+            }
+            if let Some(ref stack) = failure.stack_trace {
+                out.push('\n');
+                out.push_str(stack);
+            }
+        }
+    } else {
+        for fid in detail_failed_descendants(&app.tree, node_id) {
+            if let Some(fnode) = app.tree.get(fid)
+                && let Some(ref result) = fnode.result
+                && let Some(ref failure) = result.failure
+            {
+                out.push_str(&format!("\n\n✗ {}\n", fnode.name));
+                out.push_str(&failure.message);
+                if let (Some(e), Some(a)) = (&failure.expected, &failure.actual) {
+                    out.push_str(&format!("\nExpected: {}\nActual:   {}", e, a));
+                }
+                if let Some(ref stack) = failure.stack_trace {
+                    out.push('\n');
+                    out.push_str(stack);
+                }
+            }
+        }
+    }
+
+    // Console output — walk up to the file node
+    let mut cur = Some(node_id);
+    while let Some(id) = cur {
+        if let Some(n) = app.tree.get(id) {
+            if n.kind == NodeKind::File && !n.console_output.is_empty() {
+                out.push_str("\n\n━━ Console Output ━━\n");
+                out.push_str(&n.console_output.join("\n"));
+                break;
+            }
+            cur = n.parent;
+        } else {
+            break;
+        }
+    }
+
+    if out.trim().is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+fn detail_failed_descendants(tree: &crate::models::TestTree, node_id: usize) -> Vec<usize> {
+    let mut result = Vec::new();
+    if let Some(node) = tree.get(node_id) {
+        for &child in &node.children {
+            if let Some(child_node) = tree.get(child) {
+                if child_node.kind == NodeKind::Test && child_node.status == TestStatus::Failed {
+                    result.push(child);
+                }
+                result.extend(detail_failed_descendants(tree, child));
+            }
+        }
+    }
+    result
 }
 
 /// Walk up from the currently selected node to its ancestor file node.
