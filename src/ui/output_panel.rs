@@ -32,7 +32,7 @@ pub fn draw(frame: &mut Frame, app: &App, scroll_offset: u16, area: Rect) -> u16
     let gauge = Gauge::default()
         .gauge_style(Style::default().fg(theme::GREEN).bg(theme::SURFACE0))
         .percent(percent)
-        .label(format!("{}%", percent));
+        .label("");
     frame.render_widget(gauge, progress_area);
 
     // Output panel: show selected node's failure info + console output
