@@ -242,6 +242,7 @@ pub fn handle_action(app: &mut App, action: Action) {
                 for i in (0..app.selected_tree_index).rev() {
                     if let Some(&(node_id, _)) = nodes.get(i)
                         && let Some(node) = app.tree.get(node_id)
+                        && node.kind == NodeKind::Test
                         && node.status == TestStatus::Failed
                     {
                         app.selected_tree_index = i;
@@ -259,6 +260,7 @@ pub fn handle_action(app: &mut App, action: Action) {
                 for i in (app.selected_tree_index + 1)..nodes.len() {
                     if let Some(&(node_id, _)) = nodes.get(i)
                         && let Some(node) = app.tree.get(node_id)
+                        && node.kind == NodeKind::Test
                         && node.status == TestStatus::Failed
                     {
                         app.selected_tree_index = i;
