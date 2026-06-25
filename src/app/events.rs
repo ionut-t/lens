@@ -136,8 +136,9 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
         }
 
         TestEvent::FileFinished { path } => {
-            let file_name = file_display_name(app, &path);
-            if let Some(file_id) = app.tree.find_root_by_name(&file_name) {
+            let display = file_display_name(app, &path);
+            let filename = basename(&display).to_string();
+            if let Some(file_id) = app.tree.find_file_by_filename(&filename) {
                 app.tree.purge_stale_children(file_id);
             }
         }
@@ -181,8 +182,50 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
         }
 
         TestEvent::DiscoveryComplete { files } => {
-            for display in &files {
-                find_or_create_file_node(app, display, display);
+            if !files.is_empty() {
+                let prefix = common_directory_prefix(&files);
+
+                // Find or create the workspace root node
+                let workspace_id = if let Some(id) = app.tree.find_root_by_name(&prefix) {
+                    id
+                } else {
+                    app.tree.add_root(NodeKind::Workspace, prefix.clone(), None)
+                };
+
+                for path in &files {
+                    let filename = basename(path).to_string();
+                    if app.tree.find_file_by_filename(&filename).is_some() {
+                        continue;
+                    }
+                    // relative path from workspace prefix (e.g. "todos/todos.service.spec.ts")
+                    let relative = if prefix.is_empty() {
+                        path.as_str()
+                    } else {
+                        path.strip_prefix(&format!("{prefix}/")).unwrap_or(path)
+                    };
+                    let parts: Vec<&str> = relative.split('/').collect();
+                    let dir_parts = &parts[..parts.len().saturating_sub(1)];
+
+                    let mut parent_id = workspace_id;
+                    for &dir in dir_parts {
+                        if let Some(id) = app.tree.find_child_by_name(parent_id, dir) {
+                            parent_id = id;
+                        } else {
+                            parent_id = app.tree.add_child(
+                                parent_id,
+                                NodeKind::Project,
+                                dir.to_string(),
+                                None,
+                            );
+                        }
+                    }
+                    app.tree.add_child(
+                        parent_id,
+                        NodeKind::File,
+                        filename,
+                        Some(PathBuf::from(path)),
+                    );
+                }
             }
             app.discovering = false;
         }
@@ -194,17 +237,51 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
     }
 }
 
-/// Find or create a file node at the root level.
+/// Find or create a file node anywhere in the tree, using just the filename (basename).
+/// Falls back to creating a root-level File node if not found (e.g. new file in watch mode).
 fn find_or_create_file_node(app: &mut App, display_name: &str, path: &str) -> usize {
-    if let Some(id) = app.tree.find_root_by_name(display_name) {
-        id
-    } else {
-        app.tree.add_root(
-            NodeKind::File,
-            display_name.to_string(),
-            Some(PathBuf::from(path)),
-        )
+    let filename = basename(display_name);
+    if let Some(id) = app.tree.find_file_by_filename(filename) {
+        return id;
     }
+    // Not found — create as a root fallback (watch mode new file)
+    app.tree.add_root(
+        NodeKind::File,
+        filename.to_string(),
+        Some(PathBuf::from(path)),
+    )
+}
+
+fn basename(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+/// Compute the common parent directory shared by all file paths.
+/// E.g. ["apps/todos/src/app/app.spec.ts", "apps/todos/src/app/todos/foo.ts"]
+///      → "apps/todos/src/app"
+fn common_directory_prefix(paths: &[String]) -> String {
+    if paths.is_empty() {
+        return String::new();
+    }
+    let dirs: Vec<Vec<&str>> = paths
+        .iter()
+        .map(|p| {
+            let parts: Vec<&str> = p.split('/').collect();
+            parts[..parts.len().saturating_sub(1)].to_vec()
+        })
+        .collect();
+
+    let first = &dirs[0];
+    let mut common_len = first.len();
+    for dir in dirs.iter().skip(1) {
+        let match_len = first
+            .iter()
+            .zip(dir.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+        common_len = common_len.min(match_len);
+    }
+    first[..common_len].join("/")
 }
 
 /// Find or create a test node under a file. Handles suite nesting via ` > ` separator.

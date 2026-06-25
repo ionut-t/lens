@@ -289,9 +289,24 @@ pub fn handle_action(app: &mut App, action: Action) {
                             name: test_name,
                         });
                     }
-                    _ => {
-                        if !node.children.is_empty() {
-                            app.tree.toggle_expanded(node_id);
+                    NodeKind::Project | NodeKind::Workspace => {
+                        let mut file_ids: Vec<usize> = Vec::new();
+                        collect_file_descendants(&app.tree, node_id, &mut file_ids);
+                        if file_ids.is_empty() {
+                            if !node.children.is_empty() {
+                                app.tree.toggle_expanded(node_id);
+                            }
+                        } else {
+                            let paths: Vec<PathBuf> = file_ids
+                                .iter()
+                                .map(|&id| resolve_file_path(app, id))
+                                .collect();
+                            for &id in &file_ids {
+                                set_running_status(app, id);
+                            }
+                            app.pending_runs.push(PendingRun::Files(paths));
+                            app.running = true;
+                            app.progress_done = 0;
                         }
                     }
                 }
@@ -385,19 +400,22 @@ pub fn handle_action(app: &mut App, action: Action) {
         }
 
         Action::FilterByDir => {
-            if let Some(file_id) = find_file_node_for_selection(app)
-                && let Some(node) = app.tree.get(file_id)
-            {
-                let dir = std::path::Path::new(&node.name)
-                    .parent()
-                    .filter(|p| !p.as_os_str().is_empty())
-                    .map(|p| p.to_string_lossy().into_owned());
-                if let Some(dir) = dir {
-                    app.filter = tui_input::Input::from(dir);
-                    app.filter_active = false;
-                    app.selected_tree_index = 0;
-                    app.tree_scroll_offset = 0;
-                }
+            if let Some(file_id) = find_file_node_for_selection(app) {
+                // Walk up to find the nearest Project ancestor (the directory node).
+                // If the file sits directly under the workspace root (no Project parent),
+                // clear the filter so all files become visible.
+                let dir = app
+                    .tree
+                    .get(file_id)
+                    .and_then(|n| n.parent)
+                    .and_then(|pid| app.tree.get(pid))
+                    .filter(|n| n.kind == NodeKind::Project)
+                    .map(|n| n.name.clone())
+                    .unwrap_or_default();
+                app.filter = tui_input::Input::from(dir);
+                app.filter_active = false;
+                app.selected_tree_index = 0;
+                app.tree_scroll_offset = 0;
             }
         }
 
@@ -753,6 +771,21 @@ fn output_failed_descendants(tree: &crate::models::TestTree, node_id: usize) -> 
         }
     }
     result
+}
+
+/// Collect all File-kind descendants of `id` into `out`.
+fn collect_file_descendants(tree: &crate::models::TestTree, id: usize, out: &mut Vec<usize>) {
+    if let Some(node) = tree.get(id) {
+        for &child_id in &node.children {
+            if let Some(child) = tree.get(child_id) {
+                if child.kind == NodeKind::File {
+                    out.push(child_id);
+                } else {
+                    collect_file_descendants(tree, child_id, out);
+                }
+            }
+        }
+    }
 }
 
 /// Walk up from the currently selected node to its ancestor file node.

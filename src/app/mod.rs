@@ -231,13 +231,12 @@ fn compute_watched_ids(tree: &TestTree, workspace: &Path, scope: &WatchScope) ->
     ids
 }
 
-fn find_file_node(tree: &TestTree, workspace: &Path, scope_path: &Path) -> Option<usize> {
-    let rel = scope_path.strip_prefix(workspace).unwrap_or(scope_path);
-    let rel_str = rel.to_string_lossy();
-    tree.roots().iter().copied().find(|&id| {
-        tree.get(id)
-            .is_some_and(|n| n.name == rel_str.as_ref() || n.path.as_deref() == Some(scope_path))
-    })
+fn find_file_node(tree: &TestTree, _workspace: &Path, scope_path: &Path) -> Option<usize> {
+    let filename = scope_path
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or_default();
+    tree.find_file_by_filename(filename)
 }
 
 fn collect_subtree(tree: &TestTree, id: usize, ids: &mut HashSet<usize>) {

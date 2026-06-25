@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use super::result::TestResult;
@@ -92,10 +93,6 @@ impl TestTree {
         id
     }
 
-    pub fn roots(&self) -> &[usize] {
-        &self.root_ids
-    }
-
     pub fn get(&self, id: usize) -> Option<&TestNode> {
         self.nodes.get(id)
     }
@@ -122,6 +119,14 @@ impl TestTree {
             .find(|&id| self.nodes.get(id).is_some_and(|n| n.name == name))
     }
 
+    /// Find any non-deleted File node whose name equals `filename` (the basename, not full path).
+    pub fn find_file_by_filename(&self, filename: &str) -> Option<usize> {
+        self.nodes
+            .iter()
+            .find(|n| !n.deleted && n.kind == NodeKind::File && n.name == filename)
+            .map(|n| n.id)
+    }
+
     /// Returns a flat list of visible node ids (respecting expanded/collapsed state),
     /// paired with their depth for indentation.
     pub fn visible_nodes(&self) -> Vec<(usize, usize)> {
@@ -142,18 +147,78 @@ impl TestTree {
         }
     }
 
-    /// Returns visible nodes filtered by a case-insensitive substring match on file names.
-    /// Only root (file) nodes are matched against the query; matching files show all children.
+    /// Returns visible nodes filtered by a case-insensitive substring match on File/Project names.
+    /// Matching nodes show all descendants; ancestor nodes of matches are also shown.
     pub fn visible_nodes_filtered(&self, query: &str) -> Vec<(usize, usize)> {
         let query_lower = query.to_lowercase();
+
+        // Nodes whose own name matches (Files and Projects only — tests/suites aren't filtered)
+        let direct_matches: HashSet<usize> = self
+            .nodes
+            .iter()
+            .filter(|n| {
+                !n.deleted
+                    && matches!(n.kind, NodeKind::File | NodeKind::Project)
+                    && n.name.to_lowercase().contains(&query_lower)
+            })
+            .map(|n| n.id)
+            .collect();
+
+        if direct_matches.is_empty() {
+            return vec![];
+        }
+
+        // Ancestor IDs of every direct match (so the path to matches stays visible)
+        let mut ancestor_ids: HashSet<usize> = HashSet::new();
+        for &id in &direct_matches {
+            let mut cur = self.nodes[id].parent;
+            while let Some(p) = cur {
+                ancestor_ids.insert(p);
+                cur = self.nodes[p].parent;
+            }
+        }
+
         let mut result = Vec::new();
         for &root_id in &self.root_ids {
-            let node = &self.nodes[root_id];
-            if node.name.to_lowercase().contains(&query_lower) {
-                self.collect_visible(root_id, 0, &mut result);
+            if direct_matches.contains(&root_id) || ancestor_ids.contains(&root_id) {
+                self.collect_filtered(root_id, 0, &direct_matches, &ancestor_ids, &mut result);
             }
         }
         result
+    }
+
+    fn collect_filtered(
+        &self,
+        id: usize,
+        depth: usize,
+        direct_matches: &HashSet<usize>,
+        ancestor_ids: &HashSet<usize>,
+        result: &mut Vec<(usize, usize)>,
+    ) {
+        result.push((id, depth));
+        let node = &self.nodes[id];
+        if !node.expanded {
+            return;
+        }
+        if direct_matches.contains(&id) {
+            // Show everything under a directly matching node
+            for &child_id in &node.children {
+                self.collect_visible(child_id, depth + 1, result);
+            }
+        } else {
+            // Only descend into children that lead to a match
+            for &child_id in &node.children {
+                if direct_matches.contains(&child_id) || ancestor_ids.contains(&child_id) {
+                    self.collect_filtered(
+                        child_id,
+                        depth + 1,
+                        direct_matches,
+                        ancestor_ids,
+                        result,
+                    );
+                }
+            }
+        }
     }
 
     /// Toggle the expanded state of a node. Returns the new state.
@@ -294,6 +359,53 @@ impl TestTree {
         for child_id in children {
             self.delete_subtree(child_id);
         }
+    }
+
+    /// Count (passed, failed, total) test nodes in the subtree rooted at `id`.
+    pub fn subtree_test_counts(&self, id: usize) -> (usize, usize, usize) {
+        let mut passed = 0;
+        let mut failed = 0;
+        let mut total = 0;
+        self.count_tests_recursive(id, &mut passed, &mut failed, &mut total);
+        (passed, failed, total)
+    }
+
+    fn count_tests_recursive(
+        &self,
+        id: usize,
+        passed: &mut usize,
+        failed: &mut usize,
+        total: &mut usize,
+    ) {
+        let node = &self.nodes[id];
+        if node.deleted {
+            return;
+        }
+        if node.kind == NodeKind::Test {
+            *total += 1;
+            match node.status {
+                TestStatus::Passed => *passed += 1,
+                TestStatus::Failed => *failed += 1,
+                _ => {}
+            }
+        }
+        for &child_id in &node.children {
+            self.count_tests_recursive(child_id, passed, failed, total);
+        }
+    }
+
+    /// Count File-kind nodes in the subtree rooted at `id`.
+    pub fn subtree_file_count(&self, id: usize) -> usize {
+        let node = &self.nodes[id];
+        if node.deleted {
+            return 0;
+        }
+        let self_count = usize::from(node.kind == NodeKind::File);
+        node.children
+            .iter()
+            .map(|&c| self.subtree_file_count(c))
+            .sum::<usize>()
+            + self_count
     }
 
     /// Reset all nodes to Pending (for re-run).
