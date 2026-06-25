@@ -394,15 +394,16 @@ pub fn handle_action(app: &mut App, action: Action) {
             {
                 app.filter = tui_input::Input::from(node.name.clone());
                 app.filter_active = false;
-                app.selected_tree_index = 0;
-                app.tree_scroll_offset = 0;
+                reposition_cursor(app, Some(file_id));
             }
         }
 
         Action::FilterByDir => {
-            let dir = if let Some(&(node_id, _)) =
-                app.visible_tree_nodes().get(app.selected_tree_index)
-            {
+            let selected_id = app
+                .visible_tree_nodes()
+                .get(app.selected_tree_index)
+                .map(|&(id, _)| id);
+            let dir = if let Some(node_id) = selected_id {
                 let node = app.tree.get(node_id);
                 match node.map(|n| n.kind) {
                     Some(NodeKind::Project) => node.map(|n| n.name.clone()).unwrap_or_default(),
@@ -431,20 +432,27 @@ pub fn handle_action(app: &mut App, action: Action) {
             };
             app.filter = tui_input::Input::from(dir);
             app.filter_active = false;
-            app.selected_tree_index = 0;
-            app.tree_scroll_offset = 0;
+            reposition_cursor(app, selected_id);
         }
 
         Action::FilterKey(key) => {
+            let current_id = app
+                .visible_tree_nodes()
+                .get(app.selected_tree_index)
+                .map(|&(id, _)| id);
             use tui_input::backend::crossterm::EventHandler;
             app.filter.handle_event(&crossterm::event::Event::Key(key));
-            app.selected_tree_index = 0;
-            app.tree_scroll_offset = 0;
+            reposition_cursor(app, current_id);
         }
 
         Action::FilterExit => {
+            let current_id = app
+                .visible_tree_nodes()
+                .get(app.selected_tree_index)
+                .map(|&(id, _)| id);
             app.filter.reset();
             app.filter_active = false;
+            reposition_cursor(app, current_id);
         }
 
         Action::FilterApply => {
@@ -787,6 +795,21 @@ fn output_failed_descendants(tree: &crate::models::TestTree, node_id: usize) -> 
         }
     }
     result
+}
+
+/// After a filter change, move the cursor to `preferred_id` if it's visible,
+/// otherwise fall back to the top of the list.
+fn reposition_cursor(app: &mut App, preferred_id: Option<usize>) {
+    let pos = preferred_id
+        .and_then(|id| {
+            app.visible_tree_nodes()
+                .iter()
+                .position(|&(nid, _)| nid == id)
+        })
+        .unwrap_or(0);
+    app.selected_tree_index = pos;
+    app.tree_scroll_offset = 0;
+    app.adjust_tree_scroll();
 }
 
 /// Collect all File-kind descendants of `id` into `out`.
