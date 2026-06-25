@@ -188,7 +188,13 @@ impl App {
 fn compute_watched_ids(tree: &TestTree, workspace: &Path, scope: &WatchScope) -> HashSet<usize> {
     let mut ids = HashSet::new();
     match scope {
-        WatchScope::None | WatchScope::All => {}
+        WatchScope::None => {}
+
+        WatchScope::All => {
+            for &root_id in tree.root_ids() {
+                collect_subtree(tree, root_id, &mut ids);
+            }
+        }
 
         WatchScope::File(scope_path) => {
             if let Some(file_id) = find_file_node(tree, workspace, scope_path) {

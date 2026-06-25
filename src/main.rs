@@ -138,13 +138,27 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                         let runner_clone = Arc::clone(runner);
                                         match pending {
                                             app::PendingRun::Files(paths) => {
-                                                tokio::spawn(async move {
-                                                    if let Err(e) = runner_clone.run_files(&paths, tx.clone()).await {
-                                                        let _ = tx.send(app::TestEvent::Error {
-                                                            message: format!("Runner error: {}", e),
-                                                        });
-                                                    }
-                                                });
+                                                if app.watch_mode {
+                                                    app.watch_scope = app::WatchScope::All;
+                                                    app.watched_ids_stale = true;
+                                                    let handle = tokio::spawn(async move {
+                                                        if let Err(e) = runner_clone.run_all_watch(tx.clone()).await {
+                                                            let _ = tx.send(app::TestEvent::Error {
+                                                                message: format!("Watch error: {}", e),
+                                                            });
+                                                        }
+                                                        let _ = tx.send(app::TestEvent::WatchStopped);
+                                                    });
+                                                    app.watch_handle = Some(handle);
+                                                } else {
+                                                    tokio::spawn(async move {
+                                                        if let Err(e) = runner_clone.run_files(&paths, tx.clone()).await {
+                                                            let _ = tx.send(app::TestEvent::Error {
+                                                                message: format!("Runner error: {}", e),
+                                                            });
+                                                        }
+                                                    });
+                                                }
                                             }
                                             app::PendingRun::File(path) => {
                                                 if app.watch_mode {
