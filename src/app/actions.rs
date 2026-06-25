@@ -400,23 +400,39 @@ pub fn handle_action(app: &mut App, action: Action) {
         }
 
         Action::FilterByDir => {
-            if let Some(file_id) = find_file_node_for_selection(app) {
-                // Walk up to find the nearest Project ancestor (the directory node).
-                // If the file sits directly under the workspace root (no Project parent),
-                // clear the filter so all files become visible.
-                let dir = app
-                    .tree
-                    .get(file_id)
-                    .and_then(|n| n.parent)
-                    .and_then(|pid| app.tree.get(pid))
-                    .filter(|n| n.kind == NodeKind::Project)
-                    .map(|n| n.name.clone())
-                    .unwrap_or_default();
-                app.filter = tui_input::Input::from(dir);
-                app.filter_active = false;
-                app.selected_tree_index = 0;
-                app.tree_scroll_offset = 0;
-            }
+            let dir = if let Some(&(node_id, _)) =
+                app.visible_tree_nodes().get(app.selected_tree_index)
+            {
+                let node = app.tree.get(node_id);
+                match node.map(|n| n.kind) {
+                    Some(NodeKind::Project) => node.map(|n| n.name.clone()).unwrap_or_default(),
+                    Some(NodeKind::Workspace) => String::new(),
+                    _ => {
+                        // File / Test / Suite: walk up to nearest Project ancestor.
+                        // Falls back to empty (clear filter) if directly under workspace.
+                        let mut cur = node.and_then(|n| n.parent);
+                        let mut found = String::new();
+                        while let Some(pid) = cur {
+                            if let Some(p) = app.tree.get(pid) {
+                                if p.kind == NodeKind::Project {
+                                    found = p.name.clone();
+                                    break;
+                                }
+                                cur = p.parent;
+                            } else {
+                                break;
+                            }
+                        }
+                        found
+                    }
+                }
+            } else {
+                return;
+            };
+            app.filter = tui_input::Input::from(dir);
+            app.filter_active = false;
+            app.selected_tree_index = 0;
+            app.tree_scroll_offset = 0;
         }
 
         Action::FilterKey(key) => {
