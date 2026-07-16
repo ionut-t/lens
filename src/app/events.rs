@@ -301,11 +301,12 @@ fn queue_startup_run(app: &mut App, target: StartupRun) {
 /// Cleared once resolved, or when the run ends (finished, errored, or watch
 /// stopped) if the name never matched.
 fn try_pending_select(app: &mut App, run_over: bool) {
-    let Some((filename, target)) = app.pending_select.clone() else {
+    let Some((filename, target)) = &app.pending_select else {
         return;
     };
 
-    if let Some(file_id) = app.tree.find_file_by_filename(&filename) {
+    let mut found = None;
+    if let Some(file_id) = app.tree.find_file_by_filename(filename) {
         let mut stack: Vec<usize> = app
             .tree
             .get(file_id)
@@ -315,24 +316,26 @@ fn try_pending_select(app: &mut App, run_over: bool) {
             let Some(node) = app.tree.get(id) else {
                 continue;
             };
-            if (node.kind == NodeKind::Test || node.kind == NodeKind::Suite) && node.name == target
+            if (node.kind == NodeKind::Test || node.kind == NodeKind::Suite) && node.name == *target
             {
-                if let Some(pos) = app
-                    .visible_tree_nodes()
-                    .iter()
-                    .position(|&(nid, _)| nid == id)
-                {
-                    app.selected_tree_index = pos;
-                    app.adjust_tree_scroll();
-                }
-                app.pending_select = None;
-                return;
+                found = Some(id);
+                break;
             }
             stack.extend(node.children.iter().copied());
         }
     }
 
-    if run_over {
+    if let Some(id) = found {
+        if let Some(pos) = app
+            .visible_tree_nodes()
+            .iter()
+            .position(|&(nid, _)| nid == id)
+        {
+            app.selected_tree_index = pos;
+            app.adjust_tree_scroll();
+        }
+        app.pending_select = None;
+    } else if run_over {
         app.pending_select = None;
     }
 }
