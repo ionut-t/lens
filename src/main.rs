@@ -34,7 +34,7 @@ struct Cli {
     project: Option<String>,
 
     /// Run this test file on startup
-    #[arg(long, value_name = "PATH")]
+    #[arg(long, value_name = "PATH", overrides_with = "file")]
     file: Option<PathBuf>,
 
     /// Run only tests/suites matching NAME (requires --file)
@@ -45,7 +45,8 @@ struct Cli {
         long,
         value_name = "NAME",
         requires = "file",
-        allow_hyphen_values = true
+        allow_hyphen_values = true,
+        overrides_with = "test"
     )]
     test: Option<String>,
 
@@ -58,7 +59,7 @@ struct Cli {
     hide_failed: bool,
 
     /// Panel layout: auto, horizontal or vertical (cycle with v)
-    #[arg(long, value_name = "LAYOUT", value_parser = parse_layout, default_value = "auto")]
+    #[arg(long, value_name = "LAYOUT", value_parser = parse_layout, default_value = "auto", overrides_with = "layout")]
     layout: LayoutMode,
 }
 
@@ -113,6 +114,12 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, cli: Cli) ->
     ));
     let editor_command = cfg.editor.command;
     let mut event_stream = EventStream::new();
+
+    // Exit cleanly on SIGHUP/SIGTERM (e.g. tmux respawn-pane/kill-pane) so the
+    // runtime tears down runner tasks and their ChildGuards kill the vitest
+    // process groups — otherwise watchers outlive lens as orphans on the pty.
+    let mut sighup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 
     loop {
         if app.watched_ids_stale {
@@ -218,6 +225,9 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, cli: Cli) ->
                 }
                 app.notifier.prune_expired();
             }
+
+            _ = sighup.recv() => break,
+            _ = sigterm.recv() => break,
         }
 
         if !app.pending_runs.is_empty()
@@ -241,6 +251,10 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, cli: Cli) ->
 }
 
 /// Spawn a runner task for every queued pending run, honouring watch mode.
+///
+/// The `let _ = tx.send(..)` results are deliberately ignored throughout:
+/// sending on an unbounded channel only fails when the receiver is dropped,
+/// i.e. the main loop has exited and there is nothing left to notify.
 fn spawn_pending_runs(app: &mut App, runner: &Arc<dyn TestRunner>) {
     for pending in std::mem::take(&mut app.pending_runs) {
         app.running = true;

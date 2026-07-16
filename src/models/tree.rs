@@ -123,7 +123,19 @@ impl TestTree {
             .find(|&id| self.nodes.get(id).is_some_and(|n| n.name == name))
     }
 
+    /// Find a non-deleted File node whose stored path equals `path`
+    /// (workspace-relative). This is the primary file lookup — unlike
+    /// basename matching it stays correct when two files share a name.
+    pub fn find_file_by_path(&self, path: &std::path::Path) -> Option<usize> {
+        self.nodes
+            .iter()
+            .find(|n| !n.deleted && n.kind == NodeKind::File && n.path.as_deref() == Some(path))
+            .map(|n| n.id)
+    }
+
     /// Find any non-deleted File node whose name equals `filename` (the basename, not full path).
+    /// Fallback for paths that don't match a stored node path exactly (e.g. symlinked
+    /// workspaces); ambiguous when two files share a basename — prefer `find_file_by_path`.
     pub fn find_file_by_filename(&self, filename: &str) -> Option<usize> {
         self.nodes
             .iter()

@@ -109,9 +109,10 @@ pub struct App {
     pub run_start: Option<std::time::Instant>,
     pub project_name: Option<String>,
     pub startup_run: Option<StartupRun>,
-    /// (file basename, test/suite name) to select once the node appears in the
-    /// tree — used by `--test`, whose target only exists after the run starts.
-    pub pending_select: Option<(String, String)>,
+    /// (workspace-relative file path, test/suite name) to select once the node
+    /// appears in the tree — used by `--test`, whose target only exists after
+    /// the run starts.
+    pub pending_select: Option<(PathBuf, String)>,
     pub layout_mode: LayoutMode,
     pub show_failed_panel: bool,
     pub notifier: Notifier,
@@ -281,12 +282,14 @@ fn compute_watched_ids(tree: &TestTree, workspace: &Path, scope: &WatchScope) ->
     ids
 }
 
-fn find_file_node(tree: &TestTree, _workspace: &Path, scope_path: &Path) -> Option<usize> {
-    let filename = scope_path
-        .file_name()
-        .and_then(|f| f.to_str())
-        .unwrap_or_default();
-    tree.find_file_by_filename(filename)
+fn find_file_node(tree: &TestTree, workspace: &Path, scope_path: &Path) -> Option<usize> {
+    let rel = scope_path.strip_prefix(workspace).unwrap_or(scope_path);
+    tree.find_file_by_path(rel).or_else(|| {
+        // Fallback for paths that don't line up with a stored node path
+        // exactly (e.g. a symlinked workspace).
+        let filename = rel.file_name().and_then(|f| f.to_str()).unwrap_or_default();
+        tree.find_file_by_filename(filename)
+    })
 }
 
 fn collect_subtree(tree: &TestTree, id: usize, ids: &mut HashSet<usize>) {

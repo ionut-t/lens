@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::{
     app::{App, PendingRun, StartupRun, WatchScope},
@@ -97,7 +97,7 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
 
         TestEvent::FileStarted { path } => {
             let file_name = file_display_name(app, &path);
-            let file_id = find_or_create_file_node(app, &file_name, &path);
+            let file_id = find_or_create_file_node(app, &file_name);
             if let Some(node) = app.tree.get_mut(file_id) {
                 node.console_output.clear();
             }
@@ -106,7 +106,7 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
 
         TestEvent::TestStarted { file, name } => {
             let file_name = file_display_name(app, &file);
-            let file_id = find_or_create_file_node(app, &file_name, &file);
+            let file_id = find_or_create_file_node(app, &file_name);
             let test_id = find_or_create_test_node(app, file_id, &name);
             if let Some(node) = app.tree.get_mut(test_id) {
                 node.status = TestStatus::Running;
@@ -121,7 +121,7 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
         } => {
             app.progress_done += 1;
             let file_name = file_display_name(app, &file);
-            let file_id = find_or_create_file_node(app, &file_name, &file);
+            let file_id = find_or_create_file_node(app, &file_name);
             let test_id = find_or_create_test_node(app, file_id, &name);
             // Don't overwrite a real result with "skipped" (happens with -t filtering)
             let dominated = result.status == TestStatus::Skipped
@@ -145,7 +145,7 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
             location,
         } => {
             let file_name = file_display_name(app, &file);
-            let file_id = find_or_create_file_node(app, &file_name, &file);
+            let file_id = find_or_create_file_node(app, &file_name);
             let suite_id = find_or_create_test_node(app, file_id, &name);
             if let Some(node) = app.tree.get_mut(suite_id) {
                 node.location = Some(location);
@@ -154,8 +154,7 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
 
         TestEvent::FileFinished { path } => {
             let display = file_display_name(app, &path);
-            let filename = basename(&display).to_string();
-            if let Some(file_id) = app.tree.find_file_by_filename(&filename) {
+            if let Some(file_id) = app.tree.find_file_by_path(Path::new(&display)) {
                 app.tree.purge_stale_children(file_id);
             }
         }
@@ -176,7 +175,7 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
 
         TestEvent::ConsoleLog { file, content } => {
             let file_name = file_display_name(app, &file);
-            let file_id = find_or_create_file_node(app, &file_name, &file);
+            let file_id = find_or_create_file_node(app, &file_name);
             if let Some(node) = app.tree.get_mut(file_id) {
                 node.console_output.push(content);
             }
@@ -211,7 +210,11 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
 
                 for path in &files {
                     let filename = basename(path).to_string();
-                    if app.tree.find_file_by_filename(&filename).is_some() {
+                    if app
+                        .tree
+                        .find_file_by_path(Path::new(path.as_str()))
+                        .is_some()
+                    {
                         continue;
                     }
                     // relative path from workspace prefix (e.g. "todos/todos.service.spec.ts")
@@ -278,12 +281,17 @@ fn queue_startup_run(app: &mut App, target: StartupRun) {
         app.workspace.join(&target.file)
     };
 
-    let Some(filename) = file.file_name().and_then(|f| f.to_str()) else {
+    if file.file_name().and_then(|f| f.to_str()).is_none() {
         app.notifier
             .error(format!("Invalid file path: {}", file.display()));
         return;
-    };
-    if let Some(file_id) = app.tree.find_file_by_filename(filename) {
+    }
+    let rel = file
+        .strip_prefix(&app.workspace)
+        .unwrap_or(&file)
+        .to_path_buf();
+
+    if let Some(file_id) = find_file_node(app, &rel) {
         if let Some(pos) = app
             .visible_tree_nodes()
             .iter()
@@ -299,7 +307,7 @@ fn queue_startup_run(app: &mut App, target: StartupRun) {
 
     let run = match target.test {
         Some(name) => {
-            app.pending_select = Some((filename.to_string(), name.clone()));
+            app.pending_select = Some((rel, name.clone()));
             PendingRun::Test { file, name }
         }
         None => PendingRun::File(file),
@@ -307,16 +315,27 @@ fn queue_startup_run(app: &mut App, target: StartupRun) {
     app.pending_runs.push(run);
 }
 
+/// Resolve a workspace-relative path to its file node. The path match is
+/// authoritative; the basename fallback covers paths that don't line up with
+/// a stored node path exactly (e.g. a symlinked workspace).
+fn find_file_node(app: &App, rel: &Path) -> Option<usize> {
+    app.tree.find_file_by_path(rel).or_else(|| {
+        rel.file_name()
+            .and_then(|f| f.to_str())
+            .and_then(|name| app.tree.find_file_by_filename(name))
+    })
+}
+
 /// Move the cursor to the pending `--test` target if its node exists by now.
 /// Cleared once resolved, or when the run ends (finished, errored, or watch
 /// stopped) if the name never matched.
 fn try_pending_select(app: &mut App, run_over: bool) {
-    let Some((filename, target)) = &app.pending_select else {
+    let Some((rel, target)) = &app.pending_select else {
         return;
     };
 
     let mut found = None;
-    if let Some(file_id) = app.tree.find_file_by_filename(filename) {
+    if let Some(file_id) = find_file_node(app, rel) {
         let mut stack: Vec<usize> = app
             .tree
             .get(file_id)
@@ -350,18 +369,19 @@ fn try_pending_select(app: &mut App, run_over: bool) {
     }
 }
 
-/// Find or create a file node anywhere in the tree, using just the filename (basename).
-/// Falls back to creating a root-level File node if not found (e.g. new file in watch mode).
-fn find_or_create_file_node(app: &mut App, display_name: &str, path: &str) -> usize {
-    let filename = basename(display_name);
-    if let Some(id) = app.tree.find_file_by_filename(filename) {
+/// Find or create a file node by its workspace-relative path (`display_name`).
+/// Matching on the full path keeps results routed correctly when two files
+/// share a basename. Creates a root-level File node if not found (e.g. a new
+/// file in watch mode).
+fn find_or_create_file_node(app: &mut App, display_name: &str) -> usize {
+    let rel = Path::new(display_name);
+    if let Some(id) = app.tree.find_file_by_path(rel) {
         return id;
     }
-    // Not found — create as a root fallback (watch mode new file)
     app.tree.add_root(
         NodeKind::File,
-        filename.to_string(),
-        Some(PathBuf::from(path)),
+        basename(display_name).to_string(),
+        Some(rel.to_path_buf()),
     )
 }
 
@@ -497,6 +517,76 @@ mod tests {
             },
         );
         assert_eq!(selected_name(&app), "math");
+    }
+
+    fn app_with_duplicate_basenames() -> App {
+        let (mut app, _rx) = App::new(PathBuf::from("/ws"));
+        handle_test_event(
+            &mut app,
+            TestEvent::DiscoveryComplete {
+                files: vec![
+                    "src/todos/dup.spec.ts".into(),
+                    "src/users/dup.spec.ts".into(),
+                ],
+            },
+        );
+        app
+    }
+
+    #[test]
+    fn duplicate_basenames_both_discovered() {
+        let app = app_with_duplicate_basenames();
+        assert!(
+            app.tree
+                .find_file_by_path(Path::new("src/todos/dup.spec.ts"))
+                .is_some()
+        );
+        assert!(
+            app.tree
+                .find_file_by_path(Path::new("src/users/dup.spec.ts"))
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn results_route_to_correct_duplicate_basename_file() {
+        let mut app = app_with_duplicate_basenames();
+        handle_test_event(
+            &mut app,
+            TestEvent::TestStarted {
+                file: "/ws/src/users/dup.spec.ts".into(),
+                name: "users works".into(),
+            },
+        );
+
+        let users_id = app
+            .tree
+            .find_file_by_path(Path::new("src/users/dup.spec.ts"))
+            .unwrap();
+        let todos_id = app
+            .tree
+            .find_file_by_path(Path::new("src/todos/dup.spec.ts"))
+            .unwrap();
+        assert_eq!(app.tree.get(users_id).unwrap().children.len(), 1);
+        assert!(app.tree.get(todos_id).unwrap().children.is_empty());
+    }
+
+    #[test]
+    fn startup_run_selects_correct_duplicate_basename_file() {
+        let mut app = app_with_duplicate_basenames();
+        app.startup_run = Some(StartupRun {
+            file: PathBuf::from("/ws/src/users/dup.spec.ts"),
+            test: None,
+        });
+        // Re-fire discovery to consume the startup run against the built tree.
+        handle_test_event(&mut app, TestEvent::DiscoveryComplete { files: vec![] });
+
+        let (selected_id, _) = app.visible_tree_nodes()[app.selected_tree_index];
+        let users_id = app
+            .tree
+            .find_file_by_path(Path::new("src/users/dup.spec.ts"))
+            .unwrap();
+        assert_eq!(selected_id, users_id);
     }
 
     #[test]
