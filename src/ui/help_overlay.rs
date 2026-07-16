@@ -37,6 +37,8 @@ const BINDINGS: &[(&str, &str)] = &[
     ("y", "yank file path"),
     ("Y", "yank failure location"),
     ("c", "copy output"),
+    ("v", "cycle layout"),
+    ("x", "toggle failed panel"),
     ("?", "toggle this help"),
     ("q / Ctrl+c", "quit"),
 ];

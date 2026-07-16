@@ -42,6 +42,8 @@ pub enum Action {
     YankPath,
     YankFailureLocation,
     YankOutput,
+    CycleLayout,
+    ToggleFailedPanel,
     ToggleHelp,
 }
 
@@ -52,7 +54,8 @@ pub fn handle_action(app: &mut App, action: Action) {
 
         Action::FocusNext => {
             app.active_panel = match app.active_panel {
-                Panel::TestTree => Panel::FailedList,
+                Panel::TestTree if app.show_failed_panel => Panel::FailedList,
+                Panel::TestTree => Panel::Output,
                 Panel::FailedList => Panel::Output,
                 Panel::Output => Panel::TestTree,
             };
@@ -62,7 +65,8 @@ pub fn handle_action(app: &mut App, action: Action) {
             app.active_panel = match app.active_panel {
                 Panel::TestTree => Panel::Output,
                 Panel::FailedList => Panel::TestTree,
-                Panel::Output => Panel::FailedList,
+                Panel::Output if app.show_failed_panel => Panel::FailedList,
+                Panel::Output => Panel::TestTree,
             };
         }
 
@@ -537,6 +541,19 @@ pub fn handle_action(app: &mut App, action: Action) {
             }
         }
 
+        Action::CycleLayout => {
+            app.layout_mode = app.layout_mode.cycle();
+            app.notifier
+                .info(format!("Layout: {}", app.layout_mode.label()), 1);
+        }
+
+        Action::ToggleFailedPanel => {
+            app.show_failed_panel = !app.show_failed_panel;
+            if !app.show_failed_panel && app.active_panel == Panel::FailedList {
+                app.active_panel = Panel::TestTree;
+            }
+        }
+
         Action::ToggleHelp => {
             app.show_help = !app.show_help;
         }
@@ -637,13 +654,15 @@ fn map_key(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('y') => Some(Action::YankPath),
         KeyCode::Char('Y') => Some(Action::YankFailureLocation),
         KeyCode::Char('c') => Some(Action::YankOutput),
+        KeyCode::Char('v') => Some(Action::CycleLayout),
+        KeyCode::Char('x') => Some(Action::ToggleFailedPanel),
         KeyCode::Char('?') => Some(Action::ToggleHelp),
         _ => None,
     }
 }
 
 /// Set a node and all its descendants to Running status.
-fn set_running_status(app: &mut App, node_id: usize) {
+pub(super) fn set_running_status(app: &mut App, node_id: usize) {
     if let Some(node) = app.tree.get(node_id) {
         let children = node.children.clone();
         if let Some(node) = app.tree.get_mut(node_id) {

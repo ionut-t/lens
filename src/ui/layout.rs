@@ -1,6 +1,11 @@
 use ratatui::prelude::*;
 
-use crate::app::App;
+use crate::app::{App, LayoutMode};
+
+/// Below this width `LayoutMode::Auto` stacks the panels vertically —
+/// side-by-side panels leave too little room to read test output
+/// (e.g. when running inside an editor split).
+const AUTO_STACK_MAX_WIDTH: u16 = 100;
 
 use super::failure_list;
 use super::help_overlay;
@@ -14,14 +19,49 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let [main_area, status_area] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
 
-    let [left_area, right_area] =
-        Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)])
+    let stacked = match app.layout_mode {
+        LayoutMode::Horizontal => false,
+        LayoutMode::Vertical => true,
+        LayoutMode::Auto => main_area.width < AUTO_STACK_MAX_WIDTH,
+    };
+
+    let (tree_area, failed_area, output_area) = match (stacked, app.show_failed_panel) {
+        (true, true) => {
+            let [tree, failed, output] = Layout::vertical([
+                Constraint::Percentage(30),
+                Constraint::Percentage(20),
+                Constraint::Percentage(50),
+            ])
             .areas(main_area);
+            (tree, Some(failed), output)
+        }
+        (true, false) => {
+            let [tree, output] =
+                Layout::vertical([Constraint::Percentage(40), Constraint::Percentage(60)])
+                    .areas(main_area);
+            (tree, None, output)
+        }
+        (false, true) => {
+            let [left_area, right_area] =
+                Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)])
+                    .areas(main_area);
 
-    let [tree_area, failed_area] =
-        Layout::vertical([Constraint::Percentage(60), Constraint::Percentage(40)]).areas(left_area);
+            let [tree, failed] =
+                Layout::vertical([Constraint::Percentage(60), Constraint::Percentage(40)])
+                    .areas(left_area);
+            (tree, Some(failed), right_area)
+        }
+        (false, false) => {
+            let [tree, output] =
+                Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)])
+                    .areas(main_area);
+            (tree, None, output)
+        }
+    };
 
-    app.failed_viewport_height = failed_area.height.saturating_sub(2) as usize;
+    app.failed_viewport_height = failed_area
+        .map(|a| a.height.saturating_sub(2) as usize)
+        .unwrap_or(0);
 
     if app.filter_active || !app.filter.value().is_empty() {
         let [search_area, filtered_tree_area] =
@@ -37,9 +77,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         test_tree::draw(frame, app, tree_area);
     }
 
-    failure_list::draw(frame, app, failed_area);
+    if let Some(failed_area) = failed_area {
+        failure_list::draw(frame, app, failed_area);
+    }
 
-    app.output_scroll_offset = output_panel::draw(frame, app, app.output_scroll_offset, right_area);
+    app.output_scroll_offset =
+        output_panel::draw(frame, app, app.output_scroll_offset, output_area);
 
     status_bar::draw(frame, app, status_area);
     notifications::draw(frame, app);
