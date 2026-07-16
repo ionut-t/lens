@@ -20,20 +20,69 @@ use ratatui::prelude::*;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, interval};
 
-use app::{Action, App, handle_action, handle_test_event, trigger_action};
+use app::{Action, App, LayoutMode, StartupRun, handle_action, handle_test_event, trigger_action};
+use clap::Parser;
 use runner::{TestRunner, resolve_nx_project};
 
 use crate::config::Config;
 
+/// A terminal UI for running and inspecting Vitest tests.
+#[derive(Parser)]
+#[command(version)]
+struct Cli {
+    /// Nx project name to scope discovery to
+    project: Option<String>,
+
+    /// Run this test file on startup
+    #[arg(long, value_name = "PATH", overrides_with = "file")]
+    file: Option<PathBuf>,
+
+    /// Run only tests/suites matching NAME (requires --file)
+    ///
+    /// Test names are freeform text and may start with '-'.
+    #[arg(
+        short,
+        long,
+        value_name = "NAME",
+        requires = "file",
+        allow_hyphen_values = true,
+        overrides_with = "test"
+    )]
+    test: Option<String>,
+
+    /// Start in watch mode
+    #[arg(short, long)]
+    watch: bool,
+
+    /// Start with the failed-tests panel hidden (toggle with x)
+    #[arg(long)]
+    hide_failed: bool,
+
+    /// Panel layout: auto, horizontal or vertical (cycle with v)
+    #[arg(long, value_name = "LAYOUT", value_parser = parse_layout, default_value = "auto", overrides_with = "layout")]
+    layout: LayoutMode,
+}
+
+fn parse_layout(s: &str) -> Result<LayoutMode, String> {
+    match s {
+        "auto" | "a" => Ok(LayoutMode::Auto),
+        "horizontal" | "h" => Ok(LayoutMode::Horizontal),
+        "vertical" | "v" => Ok(LayoutMode::Vertical),
+        _ => Err("expected auto, horizontal or vertical".into()),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
     // Setup terminal
     terminal::enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run(&mut terminal).await;
+    let result = run(&mut terminal, cli).await;
 
     // Teardown terminal
     terminal::disable_raw_mode()?;
@@ -42,23 +91,35 @@ async fn main() -> Result<()> {
     result
 }
 
-async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, cli: Cli) -> Result<()> {
     let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let project = std::env::args().nth(1);
     let cfg = Config::load(&workspace);
 
     let (mut app, mut event_rx) = App::new(workspace.clone());
-    app.project_name = project.clone();
+    app.project_name = cli.project.clone();
+    app.watch_mode = cli.watch;
+    app.show_failed_panel = !cli.hide_failed;
+    app.layout_mode = cli.layout;
+    app.startup_run = cli.file.map(|file| StartupRun {
+        file,
+        test: cli.test,
+    });
     let mut tick = interval(Duration::from_millis(100));
     let mut test_runner: Option<Arc<dyn TestRunner>> = None;
     let mut runner_rx = Some(start_runner(
         workspace,
-        project,
+        cli.project,
         cfg.discovery.ignore,
         app.event_tx.clone(),
     ));
     let editor_command = cfg.editor.command;
     let mut event_stream = EventStream::new();
+
+    // Exit cleanly on SIGHUP/SIGTERM (e.g. tmux respawn-pane/kill-pane) so the
+    // runtime tears down runner tasks and their ChildGuards kill the vitest
+    // process groups — otherwise watchers outlive lens as orphans on the pty.
+    let mut sighup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 
     loop {
         if app.watched_ids_stale {
@@ -124,93 +185,6 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                                 }
                                 other => {
                                     handle_action(&mut app, other);
-                                    for pending in app.pending_runs.drain(..) {
-                                        app.running = true;
-                                        app.run_start = Some(std::time::Instant::now());
-                                        let tx = app.event_tx.clone();
-
-                                        // In watch mode, stop the previous watch before starting a new one
-                                        if app.watch_mode &&
-                                             let Some(h) = app.watch_handle.take() {
-                                                h.abort();
-                                        }
-
-                                        let runner_clone = Arc::clone(runner);
-                                        match pending {
-                                            app::PendingRun::Files(paths) => {
-                                                if app.watch_mode {
-                                                    app.watch_scope = app::WatchScope::All;
-                                                    app.watched_ids_stale = true;
-                                                    let handle = tokio::spawn(async move {
-                                                        if let Err(e) = runner_clone.run_all_watch(tx.clone()).await {
-                                                            let _ = tx.send(app::TestEvent::Error {
-                                                                message: format!("Watch error: {}", e),
-                                                            });
-                                                        }
-                                                        let _ = tx.send(app::TestEvent::WatchStopped);
-                                                    });
-                                                    app.watch_handle = Some(handle);
-                                                } else {
-                                                    tokio::spawn(async move {
-                                                        if let Err(e) = runner_clone.run_files(&paths, tx.clone()).await {
-                                                            let _ = tx.send(app::TestEvent::Error {
-                                                                message: format!("Runner error: {}", e),
-                                                            });
-                                                        }
-                                                    });
-                                                }
-                                            }
-                                            app::PendingRun::File(path) => {
-                                                if app.watch_mode {
-                                                    app.watch_scope = app::WatchScope::File(path.clone());
-                                                    app.watched_ids_stale = true;
-                                                    let handle = tokio::spawn(async move {
-                                                        if let Err(e) = runner_clone.run_file_watch(&path, tx.clone()).await {
-                                                            let _ = tx.send(app::TestEvent::Error {
-                                                                message: format!("Watch error: {}", e),
-                                                            });
-                                                        }
-                                                        let _ = tx.send(app::TestEvent::WatchStopped);
-                                                    });
-                                                    app.watch_handle = Some(handle);
-                                                } else {
-                                                    tokio::spawn(async move {
-                                                        if let Err(e) = runner_clone.run_file(&path, tx.clone()).await {
-                                                            let _ = tx.send(app::TestEvent::Error {
-                                                                message: format!("Runner error: {}", e),
-                                                            });
-                                                        }
-                                                    });
-                                                }
-                                            }
-                                            app::PendingRun::Test { file, name } => {
-                                                if app.watch_mode {
-                                                    app.watch_scope = app::WatchScope::Test {
-                                                        file: file.clone(),
-                                                        name: name.clone(),
-                                                    };
-                                                    app.watched_ids_stale = true;
-                                                    let handle = tokio::spawn(async move {
-                                                        if let Err(e) = runner_clone.run_test_watch(&file, &name, tx.clone()).await {
-                                                            let _ = tx.send(app::TestEvent::Error {
-                                                                message: format!("Watch error: {}", e),
-                                                            });
-                                                        }
-                                                        let _ = tx.send(app::TestEvent::WatchStopped);
-                                                    });
-                                                    app.watch_handle = Some(handle);
-                                                } else {
-                                                    tokio::spawn(async move {
-                                                        if let Err(e) = runner_clone.run_test(&file, &name, tx.clone()).await {
-                                                            let _ = tx.send(app::TestEvent::Error {
-                                                                message: format!("Runner error: {}", e),
-                                                            });
-                                                        }
-                                                    });
-                                                }
-                                            }
-                                        }
-                                    }
                                 }
                             }
                         } else {
@@ -251,6 +225,15 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                 }
                 app.notifier.prune_expired();
             }
+
+            _ = sighup.recv() => break,
+            _ = sigterm.recv() => break,
+        }
+
+        if !app.pending_runs.is_empty()
+            && let Some(ref runner) = test_runner
+        {
+            spawn_pending_runs(&mut app, runner);
         }
 
         if let Some((path, line, col)) = app.pending_editor.take()
@@ -265,6 +248,68 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
     }
 
     Ok(())
+}
+
+/// Spawn a runner task for every queued pending run, honouring watch mode.
+///
+/// The `let _ = tx.send(..)` results are deliberately ignored throughout:
+/// sending on an unbounded channel only fails when the receiver is dropped,
+/// i.e. the main loop has exited and there is nothing left to notify.
+fn spawn_pending_runs(app: &mut App, runner: &Arc<dyn TestRunner>) {
+    for pending in std::mem::take(&mut app.pending_runs) {
+        app.running = true;
+        app.run_start = Some(std::time::Instant::now());
+        let tx = app.event_tx.clone();
+        let runner = Arc::clone(runner);
+
+        if app.watch_mode {
+            // Stop the previous watch, update the scope, then start a new one.
+            if let Some(h) = app.watch_handle.take() {
+                h.abort();
+            }
+            app.watch_scope = match &pending {
+                app::PendingRun::Files(_) => app::WatchScope::All,
+                app::PendingRun::File(path) => app::WatchScope::File(path.clone()),
+                app::PendingRun::Test { file, name } => app::WatchScope::Test {
+                    file: file.clone(),
+                    name: name.clone(),
+                },
+            };
+            app.watched_ids_stale = true;
+
+            let handle = tokio::spawn(async move {
+                let result = match pending {
+                    app::PendingRun::Files(_) => runner.run_all_watch(tx.clone()).await,
+                    app::PendingRun::File(path) => runner.run_file_watch(&path, tx.clone()).await,
+                    app::PendingRun::Test { file, name } => {
+                        runner.run_test_watch(&file, &name, tx.clone()).await
+                    }
+                };
+                if let Err(e) = result {
+                    let _ = tx.send(app::TestEvent::Error {
+                        message: format!("Watch error: {}", e),
+                    });
+                }
+                let _ = tx.send(app::TestEvent::WatchStopped);
+            });
+            app.watch_handle = Some(handle);
+        } else {
+            tokio::spawn(async move {
+                let result = match pending {
+                    app::PendingRun::Files(paths) => runner.run_files(&paths, tx.clone()).await,
+                    app::PendingRun::File(path) => runner.run_file(&path, tx.clone()).await,
+                    app::PendingRun::Test { file, name } => {
+                        runner.run_test(&file, &name, tx.clone()).await
+                    }
+                };
+                if let Err(e) = result {
+                    let _ = tx.send(app::TestEvent::Error {
+                        message: format!("Runner error: {}", e),
+                    });
+                }
+            });
+        }
+    }
 }
 
 /// Spawn the async runner-init task and return a receiver for the constructed runner.

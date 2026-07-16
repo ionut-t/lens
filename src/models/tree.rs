@@ -123,11 +123,13 @@ impl TestTree {
             .find(|&id| self.nodes.get(id).is_some_and(|n| n.name == name))
     }
 
-    /// Find any non-deleted File node whose name equals `filename` (the basename, not full path).
-    pub fn find_file_by_filename(&self, filename: &str) -> Option<usize> {
+    /// Find a non-deleted File node whose stored path equals `path`
+    /// (workspace-relative). Exact path match only — basename matching would
+    /// be ambiguous when two files share a name.
+    pub fn find_file_by_path(&self, path: &std::path::Path) -> Option<usize> {
         self.nodes
             .iter()
-            .find(|n| !n.deleted && n.kind == NodeKind::File && n.name == filename)
+            .find(|n| !n.deleted && n.kind == NodeKind::File && n.path.as_deref() == Some(path))
             .map(|n| n.id)
     }
 

@@ -33,11 +33,45 @@ pub enum Panel {
     Output,
 }
 
+/// How the three panels are arranged. `Auto` picks based on terminal width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutMode {
+    Auto,
+    Horizontal,
+    Vertical,
+}
+
+impl LayoutMode {
+    pub fn cycle(self) -> Self {
+        match self {
+            Self::Auto => Self::Horizontal,
+            Self::Horizontal => Self::Vertical,
+            Self::Vertical => Self::Auto,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Horizontal => "horizontal",
+            Self::Vertical => "vertical",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum PendingRun {
     File(PathBuf),
     Files(Vec<PathBuf>),
     Test { file: PathBuf, name: String },
+}
+
+/// A run requested from the command line (`--file` / `--test`), queued
+/// automatically once discovery completes.
+#[derive(Debug, Clone)]
+pub struct StartupRun {
+    pub file: PathBuf,
+    pub test: Option<String>,
 }
 
 pub struct App {
@@ -74,6 +108,13 @@ pub struct App {
     pub summary: Option<RunSummary>,
     pub run_start: Option<std::time::Instant>,
     pub project_name: Option<String>,
+    pub startup_run: Option<StartupRun>,
+    /// (workspace-relative file path, test/suite name) to select once the node
+    /// appears in the tree — used by `--test`, whose target only exists after
+    /// the run starts.
+    pub pending_select: Option<(PathBuf, String)>,
+    pub layout_mode: LayoutMode,
+    pub show_failed_panel: bool,
     pub notifier: Notifier,
     pub show_help: bool,
 }
@@ -113,6 +154,10 @@ impl App {
             summary: None,
             run_start: None,
             project_name: None,
+            startup_run: None,
+            pending_select: None,
+            layout_mode: LayoutMode::Auto,
+            show_failed_panel: true,
             notifier: Notifier::new(),
             show_help: false,
         };
@@ -237,12 +282,9 @@ fn compute_watched_ids(tree: &TestTree, workspace: &Path, scope: &WatchScope) ->
     ids
 }
 
-fn find_file_node(tree: &TestTree, _workspace: &Path, scope_path: &Path) -> Option<usize> {
-    let filename = scope_path
-        .file_name()
-        .and_then(|f| f.to_str())
-        .unwrap_or_default();
-    tree.find_file_by_filename(filename)
+fn find_file_node(tree: &TestTree, workspace: &Path, scope_path: &Path) -> Option<usize> {
+    let rel = scope_path.strip_prefix(workspace).unwrap_or(scope_path);
+    tree.find_file_by_path(rel)
 }
 
 fn collect_subtree(tree: &TestTree, id: usize, ids: &mut HashSet<usize>) {
