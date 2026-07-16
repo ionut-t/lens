@@ -67,6 +67,15 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
         event,
         TestEvent::RunFinished { .. } | TestEvent::Error { .. } | TestEvent::WatchStopped
     );
+    // Only these events create tree nodes, so only they can make the pending
+    // `--test` target appear. (Suite nodes can first appear via TestFinished —
+    // skipped tests under `-t` never emit TestStarted — or SuiteLocation.)
+    let node_created = matches!(
+        event,
+        TestEvent::TestStarted { .. }
+            | TestEvent::TestFinished { .. }
+            | TestEvent::SuiteLocation { .. }
+    );
 
     match event {
         TestEvent::RunStarted => {
@@ -254,7 +263,7 @@ pub fn handle_test_event(app: &mut App, event: TestEvent) {
         }
     }
 
-    if app.pending_select.is_some() {
+    if app.pending_select.is_some() && (node_created || run_over) {
         try_pending_select(app, run_over);
     }
 }
@@ -269,10 +278,11 @@ fn queue_startup_run(app: &mut App, target: StartupRun) {
         app.workspace.join(&target.file)
     };
 
-    let filename = file
-        .file_name()
-        .and_then(|f| f.to_str())
-        .unwrap_or_default();
+    let Some(filename) = file.file_name().and_then(|f| f.to_str()) else {
+        app.notifier
+            .error(format!("Invalid file path: {}", file.display()));
+        return;
+    };
     if let Some(file_id) = app.tree.find_file_by_filename(filename) {
         if let Some(pos) = app
             .visible_tree_nodes()
@@ -487,6 +497,23 @@ mod tests {
             },
         );
         assert_eq!(selected_name(&app), "math");
+    }
+
+    #[test]
+    fn startup_run_with_invalid_path_is_rejected() {
+        let (mut app, _rx) = App::new(PathBuf::from("/ws"));
+        app.startup_run = Some(StartupRun {
+            file: PathBuf::from("/"),
+            test: None,
+        });
+        handle_test_event(
+            &mut app,
+            TestEvent::DiscoveryComplete {
+                files: vec!["src/math.test.ts".into()],
+            },
+        );
+        assert!(app.pending_runs.is_empty());
+        assert!(app.pending_select.is_none());
     }
 
     #[test]

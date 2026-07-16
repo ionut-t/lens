@@ -38,7 +38,15 @@ struct Cli {
     file: Option<PathBuf>,
 
     /// Run only tests/suites matching NAME (requires --file)
-    #[arg(short, long, value_name = "NAME", requires = "file")]
+    ///
+    /// Test names are freeform text and may start with '-'.
+    #[arg(
+        short,
+        long,
+        value_name = "NAME",
+        requires = "file",
+        allow_hyphen_values = true
+    )]
     test: Option<String>,
 
     /// Start in watch mode
