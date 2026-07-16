@@ -36,7 +36,11 @@ pub trait TestRunner: Send + Sync {
     ) -> Result<()>;
 
     /// Run a specific subset of test files in a single process.
-    async fn run_files(&self, files: &[PathBuf], tx: mpsc::UnboundedSender<TestEvent>) -> Result<()> {
+    async fn run_files(
+        &self,
+        files: &[PathBuf],
+        tx: mpsc::UnboundedSender<TestEvent>,
+    ) -> Result<()> {
         for file in files {
             self.run_file(file, tx.clone()).await?;
         }
