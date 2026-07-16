@@ -284,12 +284,7 @@ fn compute_watched_ids(tree: &TestTree, workspace: &Path, scope: &WatchScope) ->
 
 fn find_file_node(tree: &TestTree, workspace: &Path, scope_path: &Path) -> Option<usize> {
     let rel = scope_path.strip_prefix(workspace).unwrap_or(scope_path);
-    tree.find_file_by_path(rel).or_else(|| {
-        // Fallback for paths that don't line up with a stored node path
-        // exactly (e.g. a symlinked workspace).
-        let filename = rel.file_name().and_then(|f| f.to_str()).unwrap_or_default();
-        tree.find_file_by_filename(filename)
-    })
+    tree.find_file_by_path(rel)
 }
 
 fn collect_subtree(tree: &TestTree, id: usize, ids: &mut HashSet<usize>) {

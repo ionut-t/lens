@@ -281,6 +281,9 @@ fn queue_startup_run(app: &mut App, target: StartupRun) {
         app.workspace.join(&target.file)
     };
 
+    // A path with no final component (e.g. "/" or "..") can't name a test
+    // file — reject it with a visible notification rather than queueing a
+    // run that vitest will fail on cryptically.
     if file.file_name().and_then(|f| f.to_str()).is_none() {
         app.notifier
             .error(format!("Invalid file path: {}", file.display()));
@@ -315,15 +318,12 @@ fn queue_startup_run(app: &mut App, target: StartupRun) {
     app.pending_runs.push(run);
 }
 
-/// Resolve a workspace-relative path to its file node. The path match is
-/// authoritative; the basename fallback covers paths that don't line up with
-/// a stored node path exactly (e.g. a symlinked workspace).
+/// Resolve a workspace-relative path to its file node by exact path match.
+/// A miss (e.g. a path that doesn't normalize to a stored node path) means no
+/// selection — deliberately no basename fallback, which would guess wrong
+/// when two files share a name.
 fn find_file_node(app: &App, rel: &Path) -> Option<usize> {
-    app.tree.find_file_by_path(rel).or_else(|| {
-        rel.file_name()
-            .and_then(|f| f.to_str())
-            .and_then(|name| app.tree.find_file_by_filename(name))
-    })
+    app.tree.find_file_by_path(rel)
 }
 
 /// Move the cursor to the pending `--test` target if its node exists by now.
