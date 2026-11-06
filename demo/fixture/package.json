@@ -1,0 +1,12 @@
+{
+  "name": "shop-sample",
+  "private": true,
+  "description": "Tiny sample project used to record the lens demo GIF.",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "3.2.4"
+  }
+}

@@ -1,1 +1,5 @@
 /target
+
+# demo recording
+/demo/.tmp
+/demo/fixture/node_modules
