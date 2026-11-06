@@ -2,6 +2,8 @@
 
 A terminal UI for running and inspecting Vitest tests.
 
+![lens running a Vitest suite: a failing test's expected/actual diff, a fix in the editor, and watch mode re-running to green](assets/demo.gif)
+
 ## Usage
 
 ```sh
